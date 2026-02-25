@@ -2167,22 +2167,21 @@ app.get("/stats/table", asyncHandler(async (req, res) => {
         res.json(response);
         return;
     }
-    const buildUserConditions = (startIndex) => {
+    const buildUserConditions = (values) => {
         const conditions = ["u.is_active = true"];
-        const values = [];
         if (scope.teamId) {
-            conditions.push(`u.team_id = $${startIndex + values.length}`);
             values.push(scope.teamId);
+            conditions.push(`u.team_id = $${values.length}`);
         }
         if (scope.members.length > 0) {
             const scopedIds = scope.members.map((member) => member.id);
-            appendInClauseWithOffset("u.id", scopedIds, values, conditions, startIndex);
+            appendInClause("u.id", scopedIds, values, conditions);
         }
         if (search) {
-            conditions.push(`LOWER(u.name) LIKE LOWER($${startIndex + values.length})`);
             values.push(`%${search}%`);
+            conditions.push(`LOWER(u.name) LIKE LOWER($${values.length})`);
         }
-        return { conditions, values };
+        return conditions;
     };
     const leaveValues = [range.startDate, range.endDate];
     const leaveConditions = [
@@ -2193,7 +2192,8 @@ app.get("/stats/table", asyncHandler(async (req, res) => {
     if (eventTypes.length > 0) {
         appendInClause("lr.type", eventTypes, leaveValues, leaveConditions);
     }
-    const { conditions: totalConditions, values: totalValues } = buildUserConditions(1);
+    const totalValues = [];
+    const totalConditions = buildUserConditions(totalValues);
     const totalRow = await queryRow(`
       SELECT COUNT(*) as total
       FROM users u
@@ -2206,8 +2206,8 @@ app.get("/stats/table", asyncHandler(async (req, res) => {
         lastEventDate: "MAX(lr.end_date)",
     };
     const sortColumn = sortMap[sortBy] ?? sortMap.totalDays;
-    const { conditions: userConditions, values: userValues } = buildUserConditions(leaveValues.length + 1);
-    const dataValues = [...leaveValues, ...userValues];
+    const dataValues = [...leaveValues];
+    const userConditions = buildUserConditions(dataValues);
     const dataRows = await queryRows(`
       SELECT
         u.id as "memberId",
@@ -2226,19 +2226,22 @@ app.get("/stats/table", asyncHandler(async (req, res) => {
       OFFSET $${dataValues.length + 2}
     `, [...dataValues, pageSize, (page - 1) * pageSize]);
     const memberIdsPage = dataRows.map((row) => row.memberId);
-    const typeRows = memberIdsPage.length > 0
-        ? await queryRows(`
-            SELECT
-              lr.user_id as "memberId",
-              lr.type,
-              COUNT(lr.id) as "totalEvents",
-              COALESCE(SUM(lr.computed_hours), 0) as "totalHours"
-            FROM leave_requests lr
-            WHERE ${leaveConditions.join(" AND ")}
-              AND lr.user_id IN (${memberIdsPage.map((_item, index) => `$${leaveValues.length + 1 + index}`).join(", ")})
-            GROUP BY lr.user_id, lr.type
-          `, [...leaveValues, ...memberIdsPage])
-        : [];
+    let typeRows = [];
+    if (memberIdsPage.length > 0) {
+        const typeConditions = [...leaveConditions];
+        const typeValues = [...leaveValues];
+        appendInClause("lr.user_id", memberIdsPage, typeValues, typeConditions);
+        typeRows = await queryRows(`
+        SELECT
+          lr.user_id as "memberId",
+          lr.type,
+          COUNT(lr.id) as "totalEvents",
+          COALESCE(SUM(lr.computed_hours), 0) as "totalHours"
+        FROM leave_requests lr
+        WHERE ${typeConditions.join(" AND ")}
+        GROUP BY lr.user_id, lr.type
+      `, typeValues);
+    }
     const typeByMember = new Map();
     for (const row of typeRows) {
         const existing = typeByMember.get(row.memberId) ?? [];
