@@ -3205,26 +3205,25 @@ app.get("/stats/table", asyncHandler(async (req, res) => {
     res.json(response);
     return;
   }
-  const buildUserConditions = (startIndex: number) => {
+  const buildUserConditions = (values: any[]) => {
     const conditions = ["u.is_active = true"];
-    const values: any[] = [];
 
     if (scope.teamId) {
-      conditions.push(`u.team_id = $${startIndex + values.length}`);
       values.push(scope.teamId);
+      conditions.push(`u.team_id = $${values.length}`);
     }
 
     if (scope.members.length > 0) {
       const scopedIds = scope.members.map((member) => member.id);
-      appendInClauseWithOffset("u.id", scopedIds, values, conditions, startIndex);
+      appendInClause("u.id", scopedIds, values, conditions);
     }
 
     if (search) {
-      conditions.push(`LOWER(u.name) LIKE LOWER($${startIndex + values.length})`);
       values.push(`%${search}%`);
+      conditions.push(`LOWER(u.name) LIKE LOWER($${values.length})`);
     }
 
-    return { conditions, values };
+    return conditions;
   };
 
   const leaveValues: any[] = [range.startDate, range.endDate];
@@ -3238,7 +3237,8 @@ app.get("/stats/table", asyncHandler(async (req, res) => {
     appendInClause("lr.type", eventTypes, leaveValues, leaveConditions);
   }
 
-  const { conditions: totalConditions, values: totalValues } = buildUserConditions(1);
+  const totalValues: any[] = [];
+  const totalConditions = buildUserConditions(totalValues);
   const totalRow = await queryRow<{ total: string }>(
     `
       SELECT COUNT(*) as total
@@ -3256,8 +3256,8 @@ app.get("/stats/table", asyncHandler(async (req, res) => {
   };
   const sortColumn = sortMap[sortBy] ?? sortMap.totalDays;
 
-  const { conditions: userConditions, values: userValues } = buildUserConditions(leaveValues.length + 1);
-  const dataValues = [...leaveValues, ...userValues];
+  const dataValues = [...leaveValues];
+  const userConditions = buildUserConditions(dataValues);
   const dataRows = await queryRows<{
     memberId: string;
     memberName: string;
@@ -3943,5 +3943,4 @@ startServer().catch((err) => {
   console.error("Failed to start server", err);
   process.exit(1);
 });
-
 
