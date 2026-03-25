@@ -3,6 +3,7 @@ import express, { type Request, type Response, type NextFunction } from "express
 import cors from "cors";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import jwt, { type SignOptions } from "jsonwebtoken";
+import { Client as LdapClient } from "ldapts";
 import { randomBytes, createHash, randomUUID } from "crypto";
 import { computeWorkingHours, parseDate, formatDate, addDays, HOURS_PER_WORKDAY } from "./shared/date-utils";
 import { getSlovakHolidaySeeds } from "./shared/holiday-seeds";
@@ -54,6 +55,21 @@ type AuthUser = {
   role: UserRole;
   email?: string;
   name?: string;
+};
+
+type AuthenticatedAppUser = {
+  id: string;
+  email: string;
+  name: string;
+  role: UserRole;
+  mustChangePassword: boolean;
+};
+
+type LdapDirectoryUser = {
+  distinguishedName: string;
+  samAccountName: string;
+  email: string;
+  displayName: string;
 };
 
 declare global {
@@ -108,6 +124,206 @@ async function queryRow<T extends QueryResultRow>(text: string, values: any[] = 
 async function queryRows<T extends QueryResultRow>(text: string, values: any[] = []): Promise<T[]> {
   const result = await pool.query<T>(text, values);
   return result.rows;
+}
+
+function getLdapConfig() {
+  const url = process.env.LDAP_URL?.trim();
+  const baseDN = process.env.LDAP_BASE_DN?.trim();
+  const bindDN = process.env.LDAP_BIND_DN?.trim();
+  const bindPassword = process.env.LDAP_BIND_PASSWORD?.trim();
+
+  if (!url || !baseDN || !bindDN || !bindPassword) {
+    return null;
+  }
+
+  return {
+    url,
+    baseDN,
+    bindDN,
+    bindPassword,
+    emailSuffix: (process.env.LDAP_EMAIL_SUFFIX?.trim() || "ldap.local").replace(/^@+/, ""),
+    timeout: Number(process.env.LDAP_TIMEOUT_MS ?? 5000),
+  };
+}
+
+function escapeLdapFilterValue(value: string): string {
+  return value
+    .replace(/\\/g, "\\5c")
+    .replace(/\*/g, "\\2a")
+    .replace(/\(/g, "\\28")
+    .replace(/\)/g, "\\29")
+    .replace(/\0/g, "\\00");
+}
+
+function takeDirectoryString(entry: Record<string, unknown>, key: string): string | null {
+  const value = entry[key];
+  if (typeof value === "string") {
+    return value.trim() || null;
+  }
+  if (Array.isArray(value)) {
+    const firstString = value.find((item) => typeof item === "string");
+    return typeof firstString === "string" ? firstString.trim() || null : null;
+  }
+  return null;
+}
+
+async function searchLdapUser(identifier: string): Promise<LdapDirectoryUser | null> {
+  const config = getLdapConfig();
+  if (!config) {
+    return null;
+  }
+
+  const client = new LdapClient({
+    url: config.url,
+    timeout: config.timeout,
+    connectTimeout: config.timeout,
+  });
+
+  try {
+    await client.bind(config.bindDN, config.bindPassword);
+    const filter = `(&(objectClass=user)(sAMAccountName=${escapeLdapFilterValue(identifier)}))`;
+    const { searchEntries } = await client.search(config.baseDN, {
+      scope: "sub",
+      filter,
+      attributes: ["distinguishedName", "sAMAccountName", "mail", "displayName", "cn"],
+      sizeLimit: 1,
+    });
+
+    const entry = searchEntries[0];
+    if (!entry) {
+      return null;
+    }
+
+    const distinguishedName = takeDirectoryString(entry, "distinguishedName");
+    const samAccountName =
+      takeDirectoryString(entry, "sAMAccountName") ?? takeDirectoryString(entry, "samAccountName");
+
+    if (!distinguishedName || !samAccountName) {
+      return null;
+    }
+
+    const email =
+      takeDirectoryString(entry, "mail")
+      ?? `${samAccountName}@${config.emailSuffix}`;
+    const displayName =
+      takeDirectoryString(entry, "displayName")
+      ?? takeDirectoryString(entry, "cn")
+      ?? samAccountName;
+
+    return {
+      distinguishedName,
+      samAccountName,
+      email: email.toLowerCase(),
+      displayName,
+    };
+  } finally {
+    await client.unbind().catch(() => undefined);
+  }
+}
+
+async function authenticateWithLdap(identifier: string, password: string): Promise<LdapDirectoryUser | null> {
+  if (!identifier || !password) {
+    return null;
+  }
+
+  const config = getLdapConfig();
+  if (!config) {
+    return null;
+  }
+
+  const directoryUser = await searchLdapUser(identifier);
+  if (!directoryUser) {
+    return null;
+  }
+
+  const client = new LdapClient({
+    url: config.url,
+    timeout: config.timeout,
+    connectTimeout: config.timeout,
+  });
+
+  try {
+    await client.bind(directoryUser.distinguishedName, password);
+    return directoryUser;
+  } catch {
+    return null;
+  } finally {
+    await client.unbind().catch(() => undefined);
+  }
+}
+
+async function findOrProvisionLdapAppUser(directoryUser: LdapDirectoryUser): Promise<AuthenticatedAppUser> {
+  const syntheticEmail = `${directoryUser.samAccountName}@${(process.env.LDAP_EMAIL_SUFFIX?.trim() || "ldap.local").replace(/^@+/, "")}`.toLowerCase();
+  const candidateEmails = Array.from(new Set([directoryUser.email.toLowerCase(), syntheticEmail]));
+
+  const existingUser = await queryRow<AuthenticatedAppUser & { isActive: boolean }>(
+    `
+      SELECT id, email, name, role,
+        must_change_password as "mustChangePassword",
+        is_active as "isActive"
+      FROM users
+      WHERE lower(email) = ANY($1::text[])
+      ORDER BY CASE WHEN lower(email) = $2 THEN 0 ELSE 1 END
+      LIMIT 1
+    `,
+    [candidateEmails, directoryUser.email.toLowerCase()]
+  );
+
+  if (existingUser) {
+    if (!existingUser.isActive) {
+      throw new HttpError(403, "User account is inactive");
+    }
+
+    if (existingUser.name !== directoryUser.displayName) {
+      await pool.query(
+        `
+          UPDATE users
+          SET name = $1,
+              updated_at = NOW()
+          WHERE id = $2
+        `,
+        [directoryUser.displayName, existingUser.id]
+      );
+      existingUser.name = directoryUser.displayName;
+    }
+
+    return {
+      id: existingUser.id,
+      email: existingUser.email,
+      name: existingUser.name,
+      role: existingUser.role,
+      mustChangePassword: existingUser.mustChangePassword,
+    };
+  }
+
+  const createdUser = await queryRow<AuthenticatedAppUser>(
+    `
+      INSERT INTO users (id, email, name, role, team_id, is_active, must_change_password, created_at, updated_at)
+      VALUES ($1, $2, $3, 'EMPLOYEE', NULL, true, false, NOW(), NOW())
+      RETURNING id, email, name, role, must_change_password as "mustChangePassword"
+    `,
+    [randomUUID(), directoryUser.email.toLowerCase(), directoryUser.displayName]
+  );
+
+  if (!createdUser) {
+    throw new HttpError(500, "Failed to provision LDAP user");
+  }
+
+  return createdUser;
+}
+
+async function authenticateWithLocalPassword(identifier: string, password: string): Promise<AuthenticatedAppUser | null> {
+  return queryRow<AuthenticatedAppUser>(
+    `
+      SELECT id, email, name, role, must_change_password as "mustChangePassword"
+      FROM users
+      WHERE email = $1
+        AND is_active = true
+        AND password_hash IS NOT NULL
+        AND password_hash = crypt($2, password_hash)
+    `,
+    [identifier, password]
+  );
 }
 
 async function createAuditLog(
@@ -700,21 +916,20 @@ async function resetSerialSequence(client: PoolClient, table: string, column: st
 }
 
 app.post("/auth/login", asyncHandler(async (req, res) => {
-  const { email, password } = req.body as { email: string; password: string };
-  const user = await queryRow<{ id: string; email: string; name: string; role: UserRole; mustChangePassword: boolean }>(
-    `
-      SELECT id, email, name, role, must_change_password as "mustChangePassword"
-      FROM users
-      WHERE email = $1
-        AND is_active = true
-        AND password_hash IS NOT NULL
-        AND password_hash = crypt($2, password_hash)
-    `,
-    [email, password]
-  );
+  const { email, password } = req.body as { email?: string; password?: string };
+
+  if (!email || !password) {
+    throw new HttpError(400, "Login and password are required");
+  }
+
+  const identifier = email.trim();
+  const ldapDirectoryUser = await authenticateWithLdap(identifier, password);
+  const user =
+    (ldapDirectoryUser ? await findOrProvisionLdapAppUser(ldapDirectoryUser) : null)
+    ?? await authenticateWithLocalPassword(identifier, password);
 
   if (!user) {
-    throw new HttpError(401, "Invalid email or password");
+    throw new HttpError(401, "Invalid login or password");
   }
 
   const token = signAuthToken({

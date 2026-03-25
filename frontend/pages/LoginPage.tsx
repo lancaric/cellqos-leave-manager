@@ -22,7 +22,7 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const { setSession } = useAuth();
   const { toast } = useToast();
-  const [email, setEmail] = useState("");
+  const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [magicEmail, setMagicEmail] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -35,7 +35,7 @@ export default function LoginPage() {
       const response = await fetch(`${apiBaseUrl}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: login, password }),
       });
 
       if (!response.ok) {
@@ -118,12 +118,12 @@ export default function LoginPage() {
         </div>
         <form className="space-y-4" onSubmit={handleLogin}>
           <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
+            <Label htmlFor="email">Email alebo AD konto</Label>
             <Input
               id="email"
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              type="text"
+              value={login}
+              onChange={(event) => setLogin(event.target.value)}
               required
             />
           </div>
