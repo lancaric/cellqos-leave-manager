@@ -5,6 +5,7 @@
   "packageManager": "bun",
   "scripts": {
     "build": "cd ../frontend && bun install && npx vite build --outDir=../backend/frontend/dist",
+    "start": "tsx server.ts",
     "dev": "tsx server.ts",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",

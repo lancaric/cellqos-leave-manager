@@ -4,6 +4,8 @@
   "type": "module",
   "packageManager": "bun",
   "scripts": {
+    "build": "npm --workspace backend run build",
+    "start": "npm --workspace backend run start",
     "dev:backend": "npm --workspace backend run dev",
     "dev:frontend": "npm --workspace frontend run dev"
   },
