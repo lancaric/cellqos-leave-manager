@@ -11,6 +11,7 @@ import RequestFormDialog from "@/components/requests/RequestFormDialog";
 import RequestDetailDialog from "@/components/requests/RequestDetailDialog";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import "./calendar.css";
+import { Badge } from "@/components/ui/badge";
 
 const localizer = momentLocalizer(moment);
 moment.locale("sk");
@@ -50,6 +51,12 @@ export default function CalendarPage() {
     queryFn: async () => {
       return backend.calendar.get({ startDate, endDate });
     },
+  });
+
+  const { data: namedayData } = useQuery({
+    queryKey: ["namedays-today"],
+    queryFn: async () => backend.namedays.today(),
+    staleTime: 1000 * 60 * 30,
   });
 
   const { data: holidayData } = useQuery({
@@ -101,6 +108,20 @@ export default function CalendarPage() {
   };
 
   const events: CalendarEvent[] = (data?.events || []).map((event) => {
+    const kind = event.kind ?? "LEAVE";
+
+    if (kind === "BIRTHDAY") {
+      const title = `Narodeniny: ${event.userName}${typeof event.age === "number" ? ` (${event.age})` : ""}`;
+      return {
+        id: event.id,
+        title,
+        start: moment(event.startDate).startOf("day").toDate(),
+        end: moment(event.startDate).startOf("day").add(1, "day").toDate(),
+        allDay: true,
+        resource: { ...event, kind },
+      };
+    }
+
     const hasTimeRange = Boolean(event.startTime || event.endTime);
     const start = hasTimeRange
       ? buildEventDateTime(event.startDate, event.startTime, "00:00:00")
@@ -117,7 +138,7 @@ export default function CalendarPage() {
       start,
       end,
       allDay: !hasTimeRange,
-      resource: { ...event, kind: "LEAVE" },
+      resource: { ...event, kind },
     };
   });
 
@@ -135,6 +156,10 @@ export default function CalendarPage() {
   const eventStyleGetter = (event: CalendarEvent) => {
     if (event.resource?.kind === "HOLIDAY") {
       return { className: "holiday-event" };
+    }
+
+    if (event.resource?.kind === "BIRTHDAY") {
+      return { className: "birthday-event" };
     }
 
     const status = event.resource.status;
@@ -187,6 +212,27 @@ export default function CalendarPage() {
         </Button>
       </div>
 
+      {namedayData?.names?.length ? (
+        <Card className="p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm text-muted-foreground">
+              Dnes meniny: <span className="font-medium text-foreground">{namedayData.names.join(", ")}</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {(namedayData.users || []).length === 0 ? (
+                <Badge variant="secondary">Nikto z používateľov</Badge>
+              ) : (
+                namedayData.users.map((user) => (
+                  <Badge key={user.id} variant="secondary">
+                    {user.name}
+                  </Badge>
+                ))
+              )}
+            </div>
+          </div>
+        </Card>
+      ) : null}
+
       <Card className="p-3 sm:p-6">
         <div className="calendar-container overflow-x-auto">
           <BigCalendar
@@ -201,7 +247,7 @@ export default function CalendarPage() {
             onNavigate={setDate}
             eventPropGetter={eventStyleGetter}
             onSelectEvent={(event: CalendarEvent) => {
-              if (event.resource?.kind === "HOLIDAY") {
+              if (event.resource?.kind === "HOLIDAY" || event.resource?.kind === "BIRTHDAY") {
                 return;
               }
               setSelectedEvent(event.resource);

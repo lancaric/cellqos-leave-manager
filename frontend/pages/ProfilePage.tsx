@@ -94,7 +94,7 @@ export default function ProfilePage() {
                 value={formatLeaveHours(balanceQuery.data?.usedHours)}
               />
               <ProfileRow
-                label="Zostatok"
+                label="Zostatok (aj s plánovanými)"
                 value={formatLeaveHours(balanceQuery.data?.remainingHours)}
               />
             </div>

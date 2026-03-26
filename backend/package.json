@@ -19,6 +19,7 @@
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
     "ldapts": "^8.0.9",
+    "name-day-calendar": "^1.1.1",
     "nodemailer": "^8.0.1",
     "pg": "^8.13.1"
   },

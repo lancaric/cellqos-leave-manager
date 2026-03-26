@@ -86,6 +86,26 @@ const asyncHandler = (handler: (req: Request, res: Response, next: NextFunction)
     handler(req, res, next).catch(next);
   };
 
+function isLeapYear(year: number) {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+function pad2(value: number) {
+  return String(value).padStart(2, "0");
+}
+
+function clampBirthdayDay(year: number, month: number, day: number) {
+  // Handle Feb 29 birthdays on non-leap years. Use Feb 28 to keep it simple/predictable.
+  if (month === 2 && day === 29 && !isLeapYear(year)) {
+    return 28;
+  }
+  return day;
+}
+
+function stripDiacritics(value: string) {
+  return value.normalize("NFD").replace(/\p{Diacritic}/gu, "");
+}
+
 app.use((req, _res, next) => {
   const header = req.headers.authorization;
   if (!header) {
@@ -2039,13 +2059,21 @@ app.get("/leave-requests", asyncHandler(async (req, res) => {
 
       const allowanceHours = await getAnnualLeaveAllowanceHoursForUser(request.userId, currentYear);
       const bookedHours = bookedByUserId.get(request.userId) ?? 0;
-      const currentBalanceHours = allowanceHours - bookedHours;
-      const extraHours = request.status === "PENDING" ? request.computedHours : 0;
+      const bookedWithoutThisRequest =
+        request.status === "PENDING"
+          ? Math.max(0, bookedHours - request.computedHours)
+          : bookedHours;
+
+      // bookedHours includes both PENDING and APPROVED, so for a pending request we show:
+      // - currentBalanceHours: balance without counting this particular pending request yet
+      // - balanceAfterApprovalHours: balance with the request counted (reserved)
+      const currentBalanceHours = allowanceHours - bookedWithoutThisRequest;
+      const balanceAfterApprovalHours = allowanceHours - bookedHours;
 
       return {
         ...request,
         currentBalanceHours,
-        balanceAfterApprovalHours: currentBalanceHours - extraHours,
+        balanceAfterApprovalHours,
       };
     })
   );
@@ -3080,7 +3108,181 @@ app.get("/calendar", asyncHandler(async (req, res) => {
     return event;
   });
 
-  res.json({ events: safeEvents });
+  // Birthday events are derived from users in the same visibility scope as this calendar request.
+  const userConditions: string[] = ["is_active = true", "birth_date IS NOT NULL"];
+  const userValues: any[] = [];
+
+  if ((isManagerUser || isAdminUser) && teamId) {
+    userConditions.push(`team_id = $${userValues.length + 1}`);
+    userValues.push(teamId);
+  }
+
+  if (!isManagerUser && !isAdminUser) {
+    if (showTeamCalendarForEmployees && viewerTeamId) {
+      userConditions.push(`team_id = $${userValues.length + 1}`);
+      userValues.push(viewerTeamId);
+    } else {
+      userConditions.push(`id = $${userValues.length + 1}`);
+      userValues.push(viewerId);
+    }
+  }
+
+  const birthdayUsers = await queryRows<{
+    id: string;
+    name: string;
+    birthDate: string;
+  }>(
+    `
+      SELECT id, name, birth_date::date::text as "birthDate"
+      FROM users
+      WHERE ${userConditions.join(" AND ")}
+      ORDER BY name ASC
+    `,
+    userValues
+  );
+
+  const startYear = Number(startDate.slice(0, 4));
+  const endYear = Number(endDate.slice(0, 4));
+  const birthdayEvents: any[] = [];
+
+  for (const user of birthdayUsers) {
+    const birthDateText = user.birthDate?.slice(0, 10);
+    if (!birthDateText || birthDateText.length !== 10) continue;
+    const birthYear = Number(birthDateText.slice(0, 4));
+    const birthMonth = Number(birthDateText.slice(5, 7));
+    const birthDay = Number(birthDateText.slice(8, 10));
+    if (!birthYear || !birthMonth || !birthDay) continue;
+
+    for (let year = startYear; year <= endYear; year += 1) {
+      const day = clampBirthdayDay(year, birthMonth, birthDay);
+      const occurrence = `${year}-${pad2(birthMonth)}-${pad2(day)}`;
+      if (occurrence < startDate || occurrence > endDate) continue;
+
+      birthdayEvents.push({
+        id: `birthday:${user.id}:${occurrence}`,
+        kind: "BIRTHDAY",
+        userId: user.id,
+        userName: user.name,
+        startDate: occurrence,
+        endDate: occurrence,
+        // Don't expose age/birth year to regular employees by default.
+        ...(isAdminUser || isManagerUser ? { age: year - birthYear } : {}),
+      });
+    }
+  }
+
+  const merged = [...safeEvents.map((e) => ({ ...e, kind: "LEAVE" })), ...birthdayEvents].sort(
+    (a, b) => String(a.startDate).localeCompare(String(b.startDate)) || String(a.id).localeCompare(String(b.id))
+  );
+
+  res.json({ events: merged });
+}));
+
+type NamedayCache = {
+  date: string;
+  response: { date: string; names: string[]; source: "local" | "unavailable"; providerStatus?: number };
+};
+
+let namedayTodayCache: NamedayCache | null = null;
+
+async function fetchSlovakNamedayToday(): Promise<{
+  date: string;
+  names: string[];
+  source: "local" | "unavailable";
+  providerStatus?: number;
+}> {
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${pad2(today.getMonth() + 1)}-${pad2(today.getDate())}`;
+
+  if (namedayTodayCache?.date === todayKey) {
+    return namedayTodayCache.response;
+  }
+
+  try {
+    const mod = await import("name-day-calendar");
+    const getNameOnDate = (mod as any).getNameOnDate as
+      | ((day: string, opts: { lang: string }) => Promise<string[]> | string[])
+      | undefined;
+
+    if (typeof getNameOnDate !== "function") {
+      const result = { date: todayKey, names: [], source: "unavailable" as const };
+      namedayTodayCache = { date: todayKey, response: result };
+      return result;
+    }
+
+    const dayKey = `${today.getMonth() + 1}-${today.getDate()}`; // e.g. "6-30"
+    const maybeNames = await Promise.resolve(getNameOnDate(dayKey, { lang: "SK" }));
+    const names = Array.isArray(maybeNames)
+      ? maybeNames.map((name) => String(name).trim()).filter(Boolean)
+      : [];
+
+    const result = { date: todayKey, names, source: "local" as const };
+    namedayTodayCache = { date: todayKey, response: result };
+    return result;
+  } catch {
+    const result = { date: todayKey, names: [], source: "unavailable" as const };
+    namedayTodayCache = { date: todayKey, response: result };
+    return result;
+  }
+}
+
+app.get("/namedays/today", asyncHandler(async (req, res) => {
+  const auth = requireAuth(req.auth ?? null);
+  const isAdminUser = isAdmin(auth.role);
+  const isManagerUser = isManager(auth.role);
+  const viewerId = auth.userID;
+  const showTeamCalendarForEmployees = await getShowTeamCalendarForEmployees();
+
+  let viewerTeamId: number | null = null;
+  if (!isAdminUser) {
+    const viewer = await queryRow<{ teamId: number | null }>(
+      "SELECT team_id as \"teamId\" FROM users WHERE id = $1",
+      [viewerId]
+    );
+    viewerTeamId = viewer?.teamId ?? null;
+  }
+
+  const { date, names, source, providerStatus } = await fetchSlovakNamedayToday();
+
+  // Determine visible users similarly to the calendar endpoint (team-scoped for employees).
+  const conditions: string[] = ["is_active = true"];
+  const values: any[] = [];
+
+  const teamId = req.query.teamId ? Number(req.query.teamId) : undefined;
+  if ((isManagerUser || isAdminUser) && teamId) {
+    conditions.push(`team_id = $${values.length + 1}`);
+    values.push(teamId);
+  }
+
+  if (!isManagerUser && !isAdminUser) {
+    if (showTeamCalendarForEmployees && viewerTeamId) {
+      conditions.push(`team_id = $${values.length + 1}`);
+      values.push(viewerTeamId);
+    } else {
+      conditions.push(`id = $${values.length + 1}`);
+      values.push(viewerId);
+    }
+  }
+
+  const users = await queryRows<{ id: string; name: string }>(
+    `SELECT id, name FROM users WHERE ${conditions.join(" AND ")} ORDER BY name ASC`,
+    values
+  );
+
+  const normalizedNamedays = new Set(names.map((n) => stripDiacritics(n).toLowerCase()));
+  const celebrants = users.filter((user) => {
+    const firstName = (user.name ?? "").trim().split(/\s+/)[0] ?? "";
+    if (!firstName) return false;
+    return normalizedNamedays.has(stripDiacritics(firstName).toLowerCase());
+  });
+
+  res.json({
+    date,
+    names,
+    users: celebrants,
+    source,
+    providerStatus,
+  });
 }));
 
 app.get("/stats/dashboard", asyncHandler(async (req, res) => {

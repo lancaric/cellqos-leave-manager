@@ -216,7 +216,7 @@ export default function ApprovalInbox({ requests, isLoading, onUpdate }: Approva
                   {request.userName && <div>Žiadateľ: {request.userName}</div>}
                   {request.currentBalanceHours !== null && request.currentBalanceHours !== undefined && (
                     <div>
-                      Zostatok: {formatLeaveHours(request.currentBalanceHours)} • Po schválení:{" "}
+                      Pred schválením: {formatLeaveHours(request.currentBalanceHours)} • Po schválení:{" "}
                       {formatLeaveHours(request.balanceAfterApprovalHours)}
                     </div>
                   )}

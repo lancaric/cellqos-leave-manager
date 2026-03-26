@@ -65,6 +65,13 @@ export function createApiClient(token: string | null) {
       get: (params: { startDate: string; endDate: string; teamId?: number }) =>
         apiRequest<{ events: any[] }>(`/calendar${toQuery(params)}`, { token }),
     },
+    namedays: {
+      today: (params: { teamId?: number } = {}) =>
+        apiRequest<{ date: string; names: string[]; users: Array<{ id: string; name: string }> }>(
+          `/namedays/today${toQuery(params)}`,
+          { token }
+        ),
+    },
     holidays: {
       list: (params: { year?: number; includeInactive?: boolean }) =>
         apiRequest<{ holidays: any[] }>(`/holidays${toQuery(params)}`, { token }),
