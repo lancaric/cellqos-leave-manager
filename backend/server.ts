@@ -51,6 +51,15 @@ const jwtSecretValue = jwtSecret;
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 
+// Allow hosting the API under /api without having to duplicate all route definitions.
+// In production, nginx should proxy only /api/* to the backend, while serving the SPA for everything else.
+app.use((req, _res, next) => {
+  if (req.url === "/api" || req.url.startsWith("/api/")) {
+    req.url = req.url.slice("/api".length) || "/";
+  }
+  next();
+});
+
 type AuthUser = {
   userID: string;
   role: UserRole;

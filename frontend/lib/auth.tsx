@@ -92,5 +92,6 @@ export const apiBaseUrl = (() => {
   if (typeof envValue === "string" && envValue.trim() !== "") {
     return normalizeApiBaseUrl(envValue);
   }
-  return import.meta.env.PROD ? "" : "http://localhost:4000";
+  // Production: same-origin via nginx, but under /api to avoid route collisions with SPA pages.
+  return import.meta.env.PROD ? "/api" : "http://localhost:4000/api";
 })();
