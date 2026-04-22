@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import Navigation from "./components/layout/Navigation";
 import CalendarPage from "./pages/CalendarPage";
@@ -12,11 +12,12 @@ import LoginPage from "./pages/LoginPage";
 import MagicLinkPage from "./pages/MagicLinkPage";
 import NotificationsPage from "./pages/NotificationsPage";
 import ProfilePage from "./pages/ProfilePage";
+import OnboardingPage from "./pages/OnboardingPage";
 import StatsDashboardPage from "./pages/StatsDashboardPage";
 import StatsCalendarPage from "./pages/StatsCalendarPage";
 import StatsExportPage from "./pages/StatsExportPage";
-import ForcePasswordChangeDialog from "./components/auth/ForcePasswordChangeDialog";
-import { AuthProvider, useAuth } from "@/lib/auth";
+import { AuthProvider, requiresOnboarding, useAuth } from "@/lib/auth";
+import { useBackend } from "@/lib/backend";
 import type { UserRole } from "~backend/shared/types";
 
 const queryClient = new QueryClient({
@@ -35,26 +36,33 @@ export default function App() {
         <BrowserRouter>
           <div className="min-h-screen bg-background">
             <Navigation />
-            <ForcePasswordChangeDialog />
             <main className="container mx-auto px-4 py-4 sm:py-6">
               <Routes>
                 <Route path="/" element={<Navigate to="/calendar" replace />} />
                 <Route path="/login" element={<LoginPage />} />
                 <Route path="/magic-link" element={<MagicLinkPage />} />
                 <Route
+                  path="/onboarding"
+                  element={
+                    <RequireOnboarding>
+                      <OnboardingPage />
+                    </RequireOnboarding>
+                  }
+                />
+                <Route
                   path="/calendar"
                   element={
-                    <RequireAuth>
+                    <RequireCompletedProfile>
                       <CalendarPage />
-                    </RequireAuth>
+                    </RequireCompletedProfile>
                   }
                 />
                 <Route
                   path="/my-requests"
                   element={
-                    <RequireAuth>
+                    <RequireCompletedProfile>
                       <MyRequestsPage />
-                    </RequireAuth>
+                    </RequireCompletedProfile>
                   }
                 />
                 <Route
@@ -76,17 +84,17 @@ export default function App() {
                 <Route
                   path="/notifications"
                   element={
-                    <RequireAuth>
+                    <RequireCompletedProfile>
                       <NotificationsPage />
-                    </RequireAuth>
+                    </RequireCompletedProfile>
                   }
                 />
                 <Route
                   path="/profile"
                   element={
-                    <RequireAuth>
+                    <RequireCompletedProfile>
                       <ProfilePage />
-                    </RequireAuth>
+                    </RequireCompletedProfile>
                   }
                 />
                 <Route
@@ -139,10 +147,83 @@ function RequireAuth({ children }: { children: ReactElement }) {
   return children;
 }
 
-function RequireRole({ children, roles }: { children: ReactElement; roles: UserRole[] }) {
+function RequireCompletedProfile({ children }: { children: ReactElement }) {
   const { user } = useAuth();
+  const backend = useBackend();
+  const profileQuery = useQuery({
+    queryKey: ["me"],
+    enabled: Boolean(user),
+    queryFn: () => backend.users.me(),
+  });
+
   if (!user) {
     return <Navigate to="/login" replace />;
+  }
+
+  if (profileQuery.isLoading) {
+    return <div className="py-12 text-center text-sm text-muted-foreground">Načítava sa profil...</div>;
+  }
+
+  const needsOnboarding = profileQuery.data
+    ? Boolean(user.role !== "ADMIN" && profileQuery.data.onboardingCompleted !== true)
+    : requiresOnboarding(user);
+
+  if (needsOnboarding) {
+    return <Navigate to="/onboarding" replace />;
+  }
+  return children;
+}
+
+function RequireOnboarding({ children }: { children: ReactElement }) {
+  const { user } = useAuth();
+  const backend = useBackend();
+  const profileQuery = useQuery({
+    queryKey: ["me"],
+    enabled: Boolean(user),
+    queryFn: () => backend.users.me(),
+  });
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (profileQuery.isLoading) {
+    return <div className="py-12 text-center text-sm text-muted-foreground">Načítava sa profil...</div>;
+  }
+
+  const needsOnboarding = profileQuery.data
+    ? Boolean(user.role !== "ADMIN" && profileQuery.data.onboardingCompleted !== true)
+    : requiresOnboarding(user);
+
+  if (!needsOnboarding) {
+    return <Navigate to="/calendar" replace />;
+  }
+  return children;
+}
+
+function RequireRole({ children, roles }: { children: ReactElement; roles: UserRole[] }) {
+  const { user } = useAuth();
+  const backend = useBackend();
+  const profileQuery = useQuery({
+    queryKey: ["me"],
+    enabled: Boolean(user),
+    queryFn: () => backend.users.me(),
+  });
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  if (profileQuery.isLoading) {
+    return <div className="py-12 text-center text-sm text-muted-foreground">Načítava sa profil...</div>;
+  }
+
+  const needsOnboarding = profileQuery.data
+    ? Boolean(user.role !== "ADMIN" && profileQuery.data.onboardingCompleted !== true)
+    : requiresOnboarding(user);
+
+  if (needsOnboarding) {
+    return <Navigate to="/onboarding" replace />;
   }
   if (!roles.includes(user.role)) {
     return <Navigate to="/calendar" replace />;

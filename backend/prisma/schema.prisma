@@ -56,6 +56,7 @@ model User {
   employmentStartDate DateTime? @map("employment_start_date") @db.Date
   birthDate          DateTime? @map("birth_date") @db.Date
   hasChild           Boolean  @default(false) @map("has_child")
+  profileCompleted   Boolean  @default(false) @map("profile_completed")
   manualLeaveAllowanceHours Float? @map("manual_leave_allowance_hours")
   isActive           Boolean  @default(true) @map("is_active")
   passwordHash       String?  @map("password_hash")

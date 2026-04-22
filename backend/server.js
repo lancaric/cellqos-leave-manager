@@ -200,7 +200,7 @@ async function getVacationPolicySupport() {
         hasPolicyColumns: accrualPolicy && carryOverEnabled && carryOverLimitHours,
     };
 }
-async function getAnnualLeaveAllowanceHoursForUser(userId, year) {
+async function getAnnualLeaveAllowanceHoursForUser(userId, year, skipCarryOver) {
     const columnSupport = await getUserColumnSupport();
     const user = await queryRow(`
       SELECT birth_date::text as "birthDate",
@@ -231,7 +231,10 @@ async function getAnnualLeaveAllowanceHoursForUser(userId, year) {
         manualAllowanceHours: null,
         accrualPolicy: policy.accrualPolicy,
     });
-    if (!policy.carryOverEnabled) {
+    if (!user.employmentStartDate) {
+        return baseAllowanceHours;
+    }
+    if (!policy.carryOverEnabled || skipCarryOver) {
         return baseAllowanceHours;
     }
     const previousYear = year - 1;
@@ -241,6 +244,18 @@ async function getAnnualLeaveAllowanceHoursForUser(userId, year) {
       WHERE user_id = $1
         AND year = $2
     `, [userId, previousYear]);
+    const previousUsed = await queryRow(`
+      SELECT COALESCE(SUM(computed_hours), 0) as total,
+        COUNT(*)::int as count
+      FROM leave_requests
+      WHERE user_id = $1
+        AND type = 'ANNUAL_LEAVE'
+        AND status IN ('PENDING', 'APPROVED')
+        AND EXTRACT(YEAR FROM start_date) = $2
+    `, [userId, previousYear]);
+    if (!previousBalance && Number(previousUsed?.count ?? 0) === 0) {
+        return baseAllowanceHours;
+    }
     const previousAllowanceHours = previousBalance
         ? Number(previousBalance.allowanceHours ?? 0)
         : computeAnnualLeaveAllowanceHours({
@@ -251,14 +266,6 @@ async function getAnnualLeaveAllowanceHoursForUser(userId, year) {
             manualAllowanceHours: null,
             accrualPolicy: policy.accrualPolicy,
         });
-    const previousUsed = await queryRow(`
-      SELECT COALESCE(SUM(computed_hours), 0) as total
-      FROM leave_requests
-      WHERE user_id = $1
-        AND type = 'ANNUAL_LEAVE'
-        AND status IN ('PENDING', 'APPROVED')
-        AND EXTRACT(YEAR FROM start_date) = $2
-    `, [userId, previousYear]);
     const carryOverLimitHours = getAnnualLeaveGroupAllowanceHours({
         birthDate: user.birthDate,
         hasChild: user.hasChild,

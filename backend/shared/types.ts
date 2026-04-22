@@ -27,6 +27,7 @@ export interface User {
   employmentStartDate: string | null;
   birthDate: string | null;
   hasChild: boolean;
+  profileCompleted: boolean;
   manualLeaveAllowanceHours: number | null;
   remainingLeaveHours?: number | null;
   isActive: boolean;

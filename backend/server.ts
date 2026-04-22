@@ -73,6 +73,7 @@ type AuthenticatedAppUser = {
   name: string;
   role: UserRole;
   mustChangePassword: boolean;
+  profileCompleted: boolean;
 };
 
 type LdapDirectoryUser = {
@@ -315,6 +316,7 @@ async function authenticateWithLdap(identifier: string, password: string): Promi
 }
 
 async function findOrProvisionLdapAppUser(directoryUser: LdapDirectoryUser): Promise<AuthenticatedAppUser> {
+  const columnSupport = await getUserColumnSupport();
   const syntheticEmail = `${directoryUser.samAccountName}@${(process.env.LDAP_EMAIL_SUFFIX?.trim() || "ldap.local").replace(/^@+/, "")}`.toLowerCase();
   const candidateEmails = Array.from(new Set([directoryUser.email.toLowerCase(), syntheticEmail]));
 
@@ -322,6 +324,7 @@ async function findOrProvisionLdapAppUser(directoryUser: LdapDirectoryUser): Pro
     `
       SELECT id, email, name, role,
         must_change_password as "mustChangePassword",
+        ${columnSupport.profileCompleted ? `profile_completed` : "TRUE"} as "profileCompleted",
         is_active as "isActive"
       FROM users
       WHERE lower(email) = ANY($1::text[])
@@ -355,14 +358,16 @@ async function findOrProvisionLdapAppUser(directoryUser: LdapDirectoryUser): Pro
       name: existingUser.name,
       role: existingUser.role,
       mustChangePassword: existingUser.mustChangePassword,
+      profileCompleted: existingUser.profileCompleted,
     };
   }
 
   const createdUser = await queryRow<AuthenticatedAppUser>(
     `
-      INSERT INTO users (id, email, name, role, team_id, is_active, must_change_password, created_at, updated_at)
-      VALUES ($1, $2, $3, 'EMPLOYEE', NULL, true, false, NOW(), NOW())
-      RETURNING id, email, name, role, must_change_password as "mustChangePassword"
+      INSERT INTO users (${columnSupport.profileCompleted ? "id, email, name, role, team_id, is_active, must_change_password, profile_completed, created_at, updated_at" : "id, email, name, role, team_id, is_active, must_change_password, created_at, updated_at"})
+      VALUES (${columnSupport.profileCompleted ? "$1, $2, $3, 'EMPLOYEE', NULL, true, false, false, NOW(), NOW()" : "$1, $2, $3, 'EMPLOYEE', NULL, true, false, NOW(), NOW()"})
+      RETURNING id, email, name, role, must_change_password as "mustChangePassword",
+        ${columnSupport.profileCompleted ? `profile_completed` : "TRUE"} as "profileCompleted"
     `,
     [randomUUID(), directoryUser.email.toLowerCase(), directoryUser.displayName]
   );
@@ -375,9 +380,12 @@ async function findOrProvisionLdapAppUser(directoryUser: LdapDirectoryUser): Pro
 }
 
 async function authenticateWithLocalPassword(identifier: string, password: string): Promise<AuthenticatedAppUser | null> {
+  const columnSupport = await getUserColumnSupport();
   return queryRow<AuthenticatedAppUser>(
     `
-      SELECT id, email, name, role, must_change_password as "mustChangePassword"
+      SELECT id, email, name, role,
+        must_change_password as "mustChangePassword",
+        ${columnSupport.profileCompleted ? `profile_completed` : "TRUE"} as "profileCompleted"
       FROM users
       WHERE email = $1
         AND is_active = true
@@ -463,6 +471,7 @@ async function getVacationPolicy(): Promise<VacationPolicy> {
 type UserColumnSupport = {
   employmentStartDate: boolean;
   manualLeaveAllowanceHours: boolean;
+  profileCompleted: boolean;
 };
 
 type VacationPolicyColumnSupport = {
@@ -583,14 +592,16 @@ function parseOptionalNumber(value?: string): number | undefined {
 }
 
 async function getUserColumnSupport(): Promise<UserColumnSupport> {
-  const [employmentStartDate, manualLeaveAllowanceHours] = await Promise.all([
+  const [employmentStartDate, manualLeaveAllowanceHours, profileCompleted] = await Promise.all([
     columnExists("users", "employment_start_date"),
     columnExists("users", "manual_leave_allowance_hours"),
+    columnExists("users", "profile_completed"),
   ]);
 
   return {
     employmentStartDate,
     manualLeaveAllowanceHours,
+    profileCompleted,
   };
 }
 
@@ -606,7 +617,7 @@ async function getVacationPolicySupport(): Promise<VacationPolicyColumnSupport> 
   };
 }
 
-async function getAnnualLeaveAllowanceHoursForUser(userId: string, year: number): Promise<number> {
+async function getAnnualLeaveAllowanceHoursForUser(userId: string, year: number, skipCarryOver?: boolean): Promise<number> {
   const columnSupport = await getUserColumnSupport();
   const user = await queryRow<{
     birthDate: string | null;
@@ -653,7 +664,11 @@ async function getAnnualLeaveAllowanceHoursForUser(userId: string, year: number)
     accrualPolicy: policy.accrualPolicy,
   });
 
-  if (!policy.carryOverEnabled) {
+  if (!user.employmentStartDate) {
+    return baseAllowanceHours;
+  }
+
+  if (!policy.carryOverEnabled || skipCarryOver) {
     return baseAllowanceHours;
   }
 
@@ -667,6 +682,24 @@ async function getAnnualLeaveAllowanceHoursForUser(userId: string, year: number)
     `,
     [userId, previousYear]
   );
+
+  const previousUsed = await queryRow<{ total: number; count: number }>(
+    `
+      SELECT COALESCE(SUM(computed_hours), 0) as total,
+        COUNT(*)::int as count
+      FROM leave_requests
+      WHERE user_id = $1
+        AND type = 'ANNUAL_LEAVE'
+        AND status IN ('PENDING', 'APPROVED')
+        AND EXTRACT(YEAR FROM start_date) = $2
+    `,
+    [userId, previousYear]
+  );
+
+  if (!previousBalance && Number(previousUsed?.count ?? 0) === 0) {
+    return baseAllowanceHours;
+  }
+
   const previousAllowanceHours = previousBalance
     ? Number(previousBalance.allowanceHours ?? 0)
     : computeAnnualLeaveAllowanceHours({
@@ -677,18 +710,6 @@ async function getAnnualLeaveAllowanceHoursForUser(userId: string, year: number)
         manualAllowanceHours: null,
         accrualPolicy: policy.accrualPolicy,
       });
-
-  const previousUsed = await queryRow<{ total: number }>(
-    `
-      SELECT COALESCE(SUM(computed_hours), 0) as total
-      FROM leave_requests
-      WHERE user_id = $1
-        AND type = 'ANNUAL_LEAVE'
-        AND status IN ('PENDING', 'APPROVED')
-        AND EXTRACT(YEAR FROM start_date) = $2
-    `,
-    [userId, previousYear]
-  );
 
   const carryOverLimitHours = getAnnualLeaveGroupAllowanceHours({
     birthDate: user.birthDate,
@@ -907,6 +928,36 @@ async function applyLeaveBalanceOverride(
   );
 }
 
+async function upsertLeaveBalanceAllowance(
+  userId: string,
+  year: number,
+  allowanceHours: number
+): Promise<void> {
+  const booked = await queryRow<{ total: number }>(
+    `
+      SELECT COALESCE(SUM(computed_hours), 0) as total
+      FROM leave_requests
+      WHERE user_id = $1
+        AND type = 'ANNUAL_LEAVE'
+        AND status IN ('PENDING', 'APPROVED')
+        AND EXTRACT(YEAR FROM start_date) = $2
+    `,
+    [userId, year]
+  );
+
+  await pool.query(
+    `
+      INSERT INTO leave_balances (user_id, year, allowance_hours, used_hours, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, NOW(), NOW())
+      ON CONFLICT (user_id, year)
+      DO UPDATE SET allowance_hours = EXCLUDED.allowance_hours,
+        used_hours = EXCLUDED.used_hours,
+        updated_at = NOW()
+    `,
+    [userId, year, allowanceHours, Number(booked?.total ?? 0)]
+  );
+}
+
 async function getShowTeamCalendarForEmployees(): Promise<boolean> {
   try {
     const settings = await queryRow<{ showTeamCalendarForEmployees: boolean }>(
@@ -1007,6 +1058,7 @@ app.post("/auth/login", asyncHandler(async (req, res) => {
 app.post("/auth/register", asyncHandler(async (req, res) => {
   const { email, name, password, teamId } = req.body as { email: string; name: string; password: string; teamId?: number | null };
   validateEmail(email);
+  const columnSupport = await getUserColumnSupport();
 
   const existing = await queryRow<{ id: string }>("SELECT id FROM users WHERE email = $1", [email]);
   if (existing) {
@@ -1016,11 +1068,12 @@ app.post("/auth/register", asyncHandler(async (req, res) => {
   const userId = randomUUID();
   const role: UserRole = "EMPLOYEE";
 
-  const user = await queryRow<{ id: string; email: string; name: string; role: UserRole }>(
+  const user = await queryRow<{ id: string; email: string; name: string; role: UserRole; profileCompleted: boolean }>(
     `
-      INSERT INTO users (id, email, name, role, team_id, password_hash)
-      VALUES ($1, $2, $3, $4, $5, crypt($6, gen_salt('bf')))
-      RETURNING id, email, name, role
+      INSERT INTO users (${columnSupport.profileCompleted ? "id, email, name, role, team_id, password_hash, profile_completed" : "id, email, name, role, team_id, password_hash"})
+      VALUES (${columnSupport.profileCompleted ? "$1, $2, $3, $4, $5, crypt($6, gen_salt('bf')), true" : "$1, $2, $3, $4, $5, crypt($6, gen_salt('bf'))"})
+      RETURNING id, email, name, role,
+        ${columnSupport.profileCompleted ? `profile_completed` : "TRUE"} as "profileCompleted"
     `,
     [userId, email, name, role, teamId ?? null, password]
   );
@@ -1050,7 +1103,7 @@ app.post("/auth/change-password", asyncHandler(async (req, res) => {
   const updated = await queryRow<{ id: string }>(
     `
       UPDATE users
-      SET password_hash = crypt($1, gen_salt('bf')),
+        SET password_hash = crypt($1, gen_salt('bf')),
           must_change_password = false
       WHERE id = $2
         AND password_hash IS NOT NULL
@@ -1099,10 +1152,13 @@ app.post("/auth/magic-link", asyncHandler(async (req, res) => {
 app.post("/auth/magic-link/verify", asyncHandler(async (req, res) => {
   const { token } = req.body as { token: string };
   const tokenHash = createHash("sha256").update(token).digest("hex");
+  const columnSupport = await getUserColumnSupport();
 
-  const user = await queryRow<{ id: string; email: string; name: string; role: UserRole; mustChangePassword: boolean }>(
+  const user = await queryRow<{ id: string; email: string; name: string; role: UserRole; mustChangePassword: boolean; profileCompleted: boolean }>(
     `
-      SELECT id, email, name, role, must_change_password as "mustChangePassword"
+      SELECT id, email, name, role,
+        must_change_password as "mustChangePassword",
+        ${columnSupport.profileCompleted ? `profile_completed` : "TRUE"} as "profileCompleted"
       FROM users
       WHERE magic_link_token_hash = $1
         AND magic_link_expires_at IS NOT NULL
@@ -1138,13 +1194,14 @@ app.post("/auth/magic-link/verify", asyncHandler(async (req, res) => {
 app.get("/users/me", asyncHandler(async (req, res) => {
   const auth = requireAuth(req.auth ?? null);
   const columnSupport = await getUserColumnSupport();
-  const user = await queryRow<User>(
+  const user = await queryRow<User & { profileCompleted: boolean }>(
     `
       SELECT id, email, name, role,
         team_id as "teamId",
         ${columnSupport.employmentStartDate ? `employment_start_date::text` : "NULL"} as "employmentStartDate",
         birth_date::text as "birthDate",
         has_child as "hasChild",
+        ${columnSupport.profileCompleted ? `profile_completed` : "TRUE"} as "profileCompleted",
         ${columnSupport.manualLeaveAllowanceHours ? `manual_leave_allowance_hours` : "NULL"} as "manualLeaveAllowanceHours",
         is_active as "isActive",
         created_at as "createdAt",
@@ -1159,7 +1216,106 @@ app.get("/users/me", asyncHandler(async (req, res) => {
     throw new HttpError(404, "User not found");
   }
 
-  res.json(user);
+  const onboardingCompleted =
+    user.role === "ADMIN"
+      ? Boolean(user.profileCompleted)
+      : Boolean(user.profileCompleted && user.birthDate && user.teamId);
+
+  res.json({ ...user, onboardingCompleted });
+}));
+
+app.patch("/users/me/onboarding", asyncHandler(async (req, res) => {
+  const auth = requireAuth(req.auth ?? null);
+  const columnSupport = await getUserColumnSupport();
+  const { birthDate, hasChild, employmentStartDate, teamId } = req.body as {
+    birthDate?: string;
+    hasChild?: boolean;
+    employmentStartDate?: string | null;
+    teamId?: number | null;
+  };
+
+  if (!birthDate) {
+    throw new HttpError(400, "Birth date is required");
+  }
+
+  if (typeof hasChild !== "boolean") {
+    throw new HttpError(400, "Child information is required");
+  }
+
+  const before = await queryRow<Record<string, unknown>>("SELECT * FROM users WHERE id = $1", [auth.userID]);
+
+  const isFirstProfileCompletion =
+    columnSupport.profileCompleted && before ? before.profile_completed === false : false;
+
+  const updates: string[] = [];
+  const values: any[] = [];
+
+  updates.push(`birth_date = $${values.length + 1}`);
+  values.push(birthDate);
+
+  updates.push(`has_child = $${values.length + 1}`);
+  values.push(hasChild);
+
+  // Only update employment_start_date if it was explicitly provided in the request
+  if (columnSupport.employmentStartDate && "employmentStartDate" in req.body) {
+    updates.push(`employment_start_date = $${values.length + 1}`);
+    values.push(employmentStartDate ?? null);
+  }
+
+  if (auth.role !== "ADMIN") {
+    updates.push(`team_id = $${values.length + 1}`);
+    values.push(teamId ?? null);
+  }
+
+  if (columnSupport.profileCompleted) {
+    updates.push("profile_completed = true");
+  }
+
+  updates.push("updated_at = NOW()");
+
+  values.push(auth.userID);
+  await pool.query(
+    `UPDATE users SET ${updates.join(", ")} WHERE id = $${values.length}`,
+    values
+  );
+
+  const user = await queryRow<User>(
+    `
+      SELECT id, email, name, role,
+        team_id as "teamId",
+        ${columnSupport.employmentStartDate ? `employment_start_date::text` : "NULL"} as "employmentStartDate",
+        birth_date::text as "birthDate",
+        has_child as "hasChild",
+        ${columnSupport.profileCompleted ? `profile_completed` : "TRUE"} as "profileCompleted",
+        ${columnSupport.manualLeaveAllowanceHours ? `manual_leave_allowance_hours` : "NULL"} as "manualLeaveAllowanceHours",
+        is_active as "isActive",
+        created_at as "createdAt",
+        updated_at as "updatedAt"
+      FROM users
+      WHERE id = $1
+    `,
+    [auth.userID]
+  );
+
+  if (!user) {
+    throw new HttpError(404, "User not found");
+  }
+
+  const currentYear = new Date().getFullYear();
+  const skipCarryOverForOnboarding = isFirstProfileCompletion && Boolean(user.employmentStartDate);
+  const allowanceHours = await getAnnualLeaveAllowanceHoursForUser(
+    auth.userID,
+    currentYear,
+    skipCarryOverForOnboarding
+  );
+
+  if (skipCarryOverForOnboarding) {
+    await upsertLeaveBalanceAllowance(auth.userID, currentYear, allowanceHours);
+  }
+
+  await createEntityAuditLog(auth.userID, "users", auth.userID, "UPDATE", before, user as unknown as Record<string, unknown>);
+
+  res.json({ user, allowanceHours });
 }));
 
 app.get("/leave-balances/me", asyncHandler(async (req, res) => {
@@ -1216,6 +1372,7 @@ app.get("/users", asyncHandler(async (req, res) => {
         ${columnSupport.employmentStartDate ? `employment_start_date::text` : "NULL"} as "employmentStartDate",
         birth_date::text as "birthDate",
         has_child as "hasChild",
+        ${columnSupport.profileCompleted ? `profile_completed` : "TRUE"} as "profileCompleted",
         ${columnSupport.manualLeaveAllowanceHours ? `manual_leave_allowance_hours` : "NULL"} as "manualLeaveAllowanceHours",
         NULL::double precision as "remainingLeaveHours",
         is_active as "isActive",
@@ -1306,6 +1463,7 @@ app.post("/users", asyncHandler(async (req, res) => {
       "has_child",
       "password_hash",
       "must_change_password",
+      ...(columnSupport.profileCompleted ? ["profile_completed"] : []),
       "created_at",
       "updated_at",
     ];
@@ -1319,6 +1477,7 @@ app.post("/users", asyncHandler(async (req, res) => {
       hasChild ?? false,
       passwordRow?.hash ?? null,
       true,
+      ...(columnSupport.profileCompleted ? [false] : []),
     ];
 
     if (columnSupport.employmentStartDate) {
@@ -1350,6 +1509,7 @@ app.post("/users", asyncHandler(async (req, res) => {
         ${columnSupport.employmentStartDate ? `employment_start_date::text` : "NULL"} as "employmentStartDate",
         birth_date::text as "birthDate",
         has_child as "hasChild",
+        ${columnSupport.profileCompleted ? `profile_completed` : "TRUE"} as "profileCompleted",
         ${columnSupport.manualLeaveAllowanceHours ? `manual_leave_allowance_hours` : "NULL"} as "manualLeaveAllowanceHours",
         is_active as "isActive",
         created_at as "createdAt",
@@ -1503,8 +1663,8 @@ app.post("/users/:id/reset-password", asyncHandler(async (req, res) => {
   await pool.query(
     `
       UPDATE users
-      SET password_hash = crypt($1, gen_salt('bf')),
-          must_change_password = true
+        SET password_hash = crypt($1, gen_salt('bf')),
+          must_change_password = false
       WHERE id = $2
     `,
     [defaultPassword, id]
@@ -1520,7 +1680,7 @@ app.post("/users/:id/reset-password", asyncHandler(async (req, res) => {
   );
 
   await createEntityAuditLog(auth.userID, "users", id, "RESET_PASSWORD", null, {
-    mustChangePassword: true,
+    mustChangePassword: false,
   });
 
   await createNotification(targetUser.id, "PASSWORD_RESET", {

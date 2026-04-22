@@ -39,6 +39,9 @@ export async function getAnnualLeaveAllowanceHours(userId, year) {
         manualAllowanceHours: null,
         accrualPolicy,
     });
+    if (!user.employmentStartDate) {
+        return baseAllowanceHours;
+    }
     if (!carryOverEnabled) {
         return baseAllowanceHours;
     }
@@ -49,6 +52,18 @@ export async function getAnnualLeaveAllowanceHours(userId, year) {
     WHERE user_id = ${userId}
       AND year = ${previousYear}
   `;
+    const previousUsed = await db.queryRow `
+    SELECT COALESCE(SUM(computed_hours), 0) as total,
+      COUNT(*)::int as count
+    FROM leave_requests
+    WHERE user_id = ${userId}
+      AND type = 'ANNUAL_LEAVE'
+      AND status IN ('PENDING', 'APPROVED')
+      AND EXTRACT(YEAR FROM start_date) = ${previousYear}
+  `;
+    if (!previousBalance && Number(previousUsed?.count ?? 0) === 0) {
+        return baseAllowanceHours;
+    }
     const previousAllowanceHours = previousBalance
         ? Number(previousBalance.allowanceHours ?? 0)
         : computeAnnualLeaveAllowanceHours({
@@ -59,14 +74,6 @@ export async function getAnnualLeaveAllowanceHours(userId, year) {
             manualAllowanceHours: null,
             accrualPolicy,
         });
-    const previousUsed = await db.queryRow `
-    SELECT COALESCE(SUM(computed_hours), 0) as total
-    FROM leave_requests
-    WHERE user_id = ${userId}
-      AND type = 'ANNUAL_LEAVE'
-      AND status IN ('PENDING', 'APPROVED')
-      AND EXTRACT(YEAR FROM start_date) = ${previousYear}
-  `;
     const carryOverLimitHours = getAnnualLeaveGroupAllowanceHours({
         birthDate: user.birthDate,
         hasChild: user.hasChild,

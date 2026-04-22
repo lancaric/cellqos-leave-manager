@@ -7,6 +7,7 @@ interface AuthUser {
   name: string;
   role: UserRole;
   mustChangePassword?: boolean;
+  profileCompleted?: boolean;
 }
 
 interface AuthSession {
@@ -72,6 +73,10 @@ export function useAuth() {
     throw new Error("useAuth must be used within AuthProvider");
   }
   return context;
+}
+
+export function requiresOnboarding(user: AuthUser | null): boolean {
+  return Boolean(user && user.role !== "ADMIN" && user.profileCompleted !== true);
 }
 
 function normalizeApiBaseUrl(value: string): string {

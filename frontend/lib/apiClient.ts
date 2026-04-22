@@ -94,6 +94,12 @@ export function createApiClient(token: string | null) {
     users: {
       list: () => apiRequest<{ users: any[] }>("/users", { token }),
       me: () => apiRequest<any>("/users/me", { token }),
+      completeOnboarding: (data: {
+        birthDate: string;
+        hasChild: boolean;
+        employmentStartDate?: string | null;
+        teamId?: number | null;
+      }) => apiRequest<{ user: any; allowanceHours: number }>("/users/me/onboarding", { method: "PATCH", body: data, token }),
       create: (data: {
         email: string;
         name: string;

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { useToast } from "@/components/ui/use-toast";
-import { apiBaseUrl, useAuth } from "@/lib/auth";
+import { apiBaseUrl, requiresOnboarding, useAuth } from "@/lib/auth";
 
 export default function MagicLinkPage() {
   const [searchParams] = useSearchParams();
@@ -34,7 +34,7 @@ export default function MagicLinkPage() {
         const payload = await response.json();
         setSession(payload);
         toast({ title: "Prihlásenie cez magic link bolo úspešné" });
-        navigate("/calendar", { replace: true });
+        navigate(requiresOnboarding(payload.user) ? "/onboarding" : "/calendar", { replace: true });
       } catch (error: any) {
         setStatus("Overenie zlyhalo.");
         toast({

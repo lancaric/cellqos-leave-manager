@@ -5,7 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
-import { apiBaseUrl, useAuth } from "@/lib/auth";
+import { apiBaseUrl, requiresOnboarding, useAuth } from "@/lib/auth";
 
 interface AuthResponse {
   token: string;
@@ -15,6 +15,7 @@ interface AuthResponse {
     name: string;
     role: "EMPLOYEE" | "MANAGER" | "ADMIN";
     mustChangePassword?: boolean;
+    profileCompleted?: boolean;
   };
 }
 
@@ -46,7 +47,7 @@ export default function LoginPage() {
       const payload = (await response.json()) as AuthResponse;
       setSession(payload);
       toast({ title: "Prihlásenie bolo úspešné" });
-      navigate("/calendar", { replace: true });
+      navigate(requiresOnboarding(payload.user) ? "/onboarding" : "/calendar", { replace: true });
     } catch (error: any) {
       toast({
         title: "Prihlásenie zlyhalo",
