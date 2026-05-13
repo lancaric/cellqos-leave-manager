@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -75,6 +76,7 @@ export default function RequestFormDialog({
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const canManageUsers = user?.role === "MANAGER" || user?.role === "ADMIN";
+  const canSkipApproval = user?.role === "ADMIN";
   const { toast } = useToast();
   const { data: usersData } = useQuery({
     queryKey: ["users"],
@@ -111,9 +113,21 @@ export default function RequestFormDialog({
       startTime: defaultStartTime,
       endTime: defaultEndTime,
       reason: request?.reason || "",
+      skipApproval: false,
     },
   });
   const selectedUserId = watch("userId");
+
+  const invalidateRequestQueries = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["my-requests"] }),
+      queryClient.invalidateQueries({ queryKey: ["team-requests"] }),
+      queryClient.invalidateQueries({ queryKey: ["pending-requests"] }),
+      queryClient.invalidateQueries({ queryKey: ["calendar"] }),
+      queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+      queryClient.invalidateQueries({ queryKey: ["leave-balance"] }),
+    ]);
+  };
 
   useEffect(() => {
     reset({
@@ -124,6 +138,7 @@ export default function RequestFormDialog({
       startTime: defaultStartTime,
       endTime: defaultEndTime,
       reason: request?.reason || "",
+      skipApproval: false,
     });
   }, [defaultEndTime, defaultStartTime, initialEndDate, initialStartDate, request, reset, user?.id]);
 
@@ -145,14 +160,7 @@ export default function RequestFormDialog({
       return backend.leave_requests.create(data);
     },
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["my-requests"] }),
-        queryClient.invalidateQueries({ queryKey: ["team-requests"] }),
-        queryClient.invalidateQueries({ queryKey: ["pending-requests"] }),
-        queryClient.invalidateQueries({ queryKey: ["calendar"] }),
-        queryClient.invalidateQueries({ queryKey: ["notifications"] }),
-        queryClient.invalidateQueries({ queryKey: ["leave-balance"] }),
-      ]);
+      await invalidateRequestQueries();
       toast({ title: "Žiadosť bola úspešne vytvorená" });
       onClose();
     },
@@ -171,14 +179,7 @@ export default function RequestFormDialog({
       return backend.leave_requests.update(data);
     },
     onSuccess: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["my-requests"] }),
-        queryClient.invalidateQueries({ queryKey: ["team-requests"] }),
-        queryClient.invalidateQueries({ queryKey: ["pending-requests"] }),
-        queryClient.invalidateQueries({ queryKey: ["calendar"] }),
-        queryClient.invalidateQueries({ queryKey: ["notifications"] }),
-        queryClient.invalidateQueries({ queryKey: ["leave-balance"] }),
-      ]);
+      await invalidateRequestQueries();
       toast({ title: "Žiadosť bola úspešne upravená" });
       onClose();
     },
@@ -193,9 +194,10 @@ export default function RequestFormDialog({
   });
   
   const onSubmit = (data: any) => {
+    const { skipApproval, ...formData } = data;
     const payload = {
-      ...data,
-      userId: canManageUsers ? data.userId : undefined,
+      ...formData,
+      userId: canManageUsers ? formData.userId : undefined,
     };
 
     if (request) {
@@ -204,7 +206,14 @@ export default function RequestFormDialog({
       return;
     }
 
-    createMutation.mutate(payload);
+    createMutation.mutate(payload, {
+      onSuccess: async (createdRequest: any) => {
+        if (canSkipApproval && skipApproval && createdRequest?.id) {
+          await backend.leave_requests.approve({ id: createdRequest.id });
+          await invalidateRequestQueries();
+        }
+      },
+    });
   };
 
   const startDate = watch("startDate");
@@ -347,6 +356,17 @@ export default function RequestFormDialog({
             <Textarea {...register("reason")} rows={3} />
           </div>
           
+          {canSkipApproval && !request && (
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="request-skip-approval"
+                checked={Boolean(watch("skipApproval"))}
+                onCheckedChange={(value) => setValue("skipApproval", Boolean(value))}
+              />
+              <Label htmlFor="request-skip-approval">Pridať bez schvaľovacieho procesu</Label>
+            </div>
+          )}
+
           <div className="flex flex-wrap justify-end gap-2">
             <Button type="button" variant="outline" onClick={onClose} className="min-w-[120px]">
               Zrušiť
