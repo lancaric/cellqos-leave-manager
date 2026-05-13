@@ -46,6 +46,16 @@ const formatDateValue = (value?: string) => {
   return value.split(" ")[0] || value;
 };
 
+const DEFAULT_START_TIME = "08:00";
+
+function getEndTimeFromWorkingHours(startTime = DEFAULT_START_TIME, workingHoursPerDay?: number | null) {
+  const hours = Number(workingHoursPerDay ?? 8);
+  const normalizedHours = Number.isFinite(hours) && hours > 0 ? hours : 8;
+  return moment(startTime, "HH:mm")
+    .add(normalizedHours, "hours")
+    .format("HH:mm");
+}
+
 export default function RequestFormDialog({
   open,
   onClose,
@@ -58,8 +68,32 @@ export default function RequestFormDialog({
   const { user } = useAuth();
   const canManageUsers = user?.role === "MANAGER" || user?.role === "ADMIN";
   const { toast } = useToast();
-  const defaultStartTime = request ? request.startTime || "08:00" : "08:00";
-  const defaultEndTime = request ? request.endTime || "16:00" : "16:00";
+  const { data: usersData } = useQuery({
+    queryKey: ["users"],
+    queryFn: async () => backend.users.list(),
+    enabled: canManageUsers,
+  });
+  const { data: meData } = useQuery({
+    queryKey: ["me"],
+    queryFn: async () => backend.users.me(),
+    enabled: !canManageUsers,
+  });
+
+  const users = usersData?.users || [];
+  const requestUserWorkingHoursPerDay = request
+    ? canManageUsers
+      ? users.find((entry: any) => entry.id === request.userId)?.workingHoursPerDay
+      : meData?.workingHoursPerDay
+    : undefined;
+  const defaultStartTime = request ? request.startTime || DEFAULT_START_TIME : DEFAULT_START_TIME;
+  const defaultWorkingHoursPerDay = request
+    ? requestUserWorkingHoursPerDay
+    : canManageUsers
+      ? users.find((entry: any) => entry.id === (user?.id ?? ""))?.workingHoursPerDay
+      : meData?.workingHoursPerDay;
+  const defaultEndTime = request
+    ? request.endTime || getEndTimeFromWorkingHours(defaultStartTime, defaultWorkingHoursPerDay)
+    : getEndTimeFromWorkingHours(defaultStartTime, defaultWorkingHoursPerDay);
   const { register, handleSubmit, setValue, watch, reset } = useForm({
     defaultValues: {
       userId: user?.id ?? "",
@@ -72,11 +106,7 @@ export default function RequestFormDialog({
     },
   });
 
-  const { data: usersData } = useQuery({
-    queryKey: ["users"],
-    queryFn: async () => backend.users.list(),
-    enabled: canManageUsers,
-  });
+  const selectedUserId = watch("userId");
 
   useEffect(() => {
     reset({
@@ -89,6 +119,19 @@ export default function RequestFormDialog({
       reason: request?.reason || "",
     });
   }, [defaultEndTime, defaultStartTime, initialEndDate, initialStartDate, request, reset, user?.id]);
+
+  useEffect(() => {
+    if (request) {
+      return;
+    }
+
+    const selectedUser = canManageUsers
+      ? users.find((entry: any) => entry.id === selectedUserId)
+      : meData;
+    const endTime = getEndTimeFromWorkingHours(DEFAULT_START_TIME, selectedUser?.workingHoursPerDay);
+    setValue("startTime", DEFAULT_START_TIME);
+    setValue("endTime", endTime);
+  }, [canManageUsers, meData, request, selectedUserId, setValue, users]);
   
   const createMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -157,7 +200,6 @@ export default function RequestFormDialog({
     createMutation.mutate(payload);
   };
 
-  const users = usersData?.users || [];
   const startDate = watch("startDate");
   const endDate = watch("endDate");
   const isSameDay = Boolean(startDate && endDate && startDate === endDate);
