@@ -23,6 +23,7 @@ export interface User {
   email: string;
   name: string;
   role: UserRole;
+  emailNotificationsEnabled?: boolean;
   teamId: number | null;
   workingHoursPerDay: number;
   employmentStartDate: string | null;

@@ -3,6 +3,7 @@ import { sendNotificationEmail } from "./email";
 import { buildNotificationEmail } from "./notification-email";
 
 let notificationsDedupeKeySupported: boolean | null = null;
+let userEmailNotificationsSupported: boolean | null = null;
 
 async function hasNotificationsDedupeKey(): Promise<boolean> {
   if (notificationsDedupeKeySupported !== null) {
@@ -18,6 +19,22 @@ async function hasNotificationsDedupeKey(): Promise<boolean> {
   `;
   notificationsDedupeKeySupported = row?.exists ?? false;
   return notificationsDedupeKeySupported;
+}
+
+async function hasUserEmailNotificationsEnabled(): Promise<boolean> {
+  if (userEmailNotificationsSupported !== null) {
+    return userEmailNotificationsSupported;
+  }
+  const row = await db.queryRow<{ exists: boolean }>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_name = 'users'
+        AND column_name = 'email_notifications_enabled'
+    ) as "exists"
+  `;
+  userEmailNotificationsSupported = row?.exists ?? false;
+  return userEmailNotificationsSupported;
 }
 
 export async function createAuditLog(
@@ -71,13 +88,15 @@ export async function createNotification(
     return;
   }
 
-  const user = await db.queryRow<{ email: string }>`
-    SELECT email
+  const supportsEmailNotifications = await hasUserEmailNotificationsEnabled();
+  const user = await db.queryRow<{ email: string; emailNotificationsEnabled: boolean }>`
+    SELECT email,
+      ${supportsEmailNotifications ? "email_notifications_enabled" : "TRUE"} as "emailNotificationsEnabled"
     FROM users
     WHERE id = ${userId}
   `;
 
-  if (!user?.email) {
+  if (!user?.email || user.emailNotificationsEnabled === false) {
     return;
   }
 

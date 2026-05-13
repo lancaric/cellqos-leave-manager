@@ -626,6 +626,7 @@ type UserColumnSupport = {
   manualLeaveAllowanceHours: boolean;
   manualCarryOverHours: boolean;
   profileCompleted: boolean;
+  emailNotificationsEnabled: boolean;
 };
 
 type VacationPolicyColumnSupport = {
@@ -769,12 +770,13 @@ async function getWorkingHoursPerDayForUser(userId: string): Promise<number> {
 }
 
 async function getUserColumnSupport(): Promise<UserColumnSupport> {
-  const [workingHoursPerDay, employmentStartDate, manualLeaveAllowanceHours, manualCarryOverHours, profileCompleted] = await Promise.all([
+  const [workingHoursPerDay, employmentStartDate, manualLeaveAllowanceHours, manualCarryOverHours, profileCompleted, emailNotificationsEnabled] = await Promise.all([
     columnExists("users", "working_hours_per_day"),
     columnExists("users", "employment_start_date"),
     columnExists("users", "manual_leave_allowance_hours"),
     columnExists("users", "manual_carry_over_hours"),
     columnExists("users", "profile_completed"),
+    columnExists("users", "email_notifications_enabled"),
   ]);
 
   return {
@@ -783,6 +785,7 @@ async function getUserColumnSupport(): Promise<UserColumnSupport> {
     manualLeaveAllowanceHours,
     manualCarryOverHours,
     profileCompleted,
+    emailNotificationsEnabled,
   };
 }
 
@@ -1069,16 +1072,18 @@ async function createNotification(
     return;
   }
 
-  const user = await queryRow<{ email: string }>(
+  const supportsEmailNotifications = await columnExists("users", "email_notifications_enabled");
+  const user = await queryRow<{ email: string; emailNotificationsEnabled: boolean }>(
     `
-      SELECT email
+      SELECT email,
+        ${supportsEmailNotifications ? "email_notifications_enabled" : "TRUE"} as "emailNotificationsEnabled"
       FROM users
       WHERE id = $1
     `,
     [userId]
   );
 
-  if (!user?.email) {
+  if (!user?.email || user.emailNotificationsEnabled === false) {
     return;
   }
 
@@ -1457,6 +1462,7 @@ app.get("/users/me", asyncHandler(async (req, res) => {
     `
       SELECT id, email, name, role,
         team_id as "teamId",
+        ${columnSupport.emailNotificationsEnabled ? "email_notifications_enabled" : "TRUE"} as "emailNotificationsEnabled",
         ${columnSupport.workingHoursPerDay ? "working_hours_per_day" : `${HOURS_PER_WORKDAY}`} as "workingHoursPerDay",
         ${columnSupport.employmentStartDate ? `employment_start_date::text` : "NULL"} as "employmentStartDate",
         birth_date::text as "birthDate",
@@ -1553,6 +1559,7 @@ app.patch("/users/me/onboarding", asyncHandler(async (req, res) => {
     `
       SELECT id, email, name, role,
         team_id as "teamId",
+        ${columnSupport.emailNotificationsEnabled ? "email_notifications_enabled" : "TRUE"} as "emailNotificationsEnabled",
         ${columnSupport.workingHoursPerDay ? "working_hours_per_day" : `${HOURS_PER_WORKDAY}`} as "workingHoursPerDay",
         ${columnSupport.employmentStartDate ? `employment_start_date::text` : "NULL"} as "employmentStartDate",
         birth_date::text as "birthDate",
@@ -1638,6 +1645,7 @@ app.get("/users", asyncHandler(async (req, res) => {
     `
       SELECT id, email, name, role,
         team_id as "teamId",
+        ${columnSupport.emailNotificationsEnabled ? "email_notifications_enabled" : "TRUE"} as "emailNotificationsEnabled",
         ${columnSupport.workingHoursPerDay ? "working_hours_per_day" : `${HOURS_PER_WORKDAY}`} as "workingHoursPerDay",
         ${columnSupport.employmentStartDate ? `employment_start_date::text` : "NULL"} as "employmentStartDate",
         birth_date::text as "birthDate",
@@ -1719,6 +1727,7 @@ app.post("/users", asyncHandler(async (req, res) => {
     employmentStartDate,
     manualLeaveAllowanceHours,
     manualCarryOverHours,
+    emailNotificationsEnabled,
   } = req.body as {
     email?: string;
     name?: string;
@@ -1731,6 +1740,7 @@ app.post("/users", asyncHandler(async (req, res) => {
     employmentStartDate?: string | null;
     manualLeaveAllowanceHours?: number | null;
     manualCarryOverHours?: number | null;
+    emailNotificationsEnabled?: boolean;
   };
 
   if (!email || !name) {
@@ -1777,6 +1787,7 @@ app.post("/users", asyncHandler(async (req, res) => {
       "name",
       "role",
       "team_id",
+      ...(columnSupport.emailNotificationsEnabled ? ["email_notifications_enabled"] : []),
       "working_hours_per_day",
       "birth_date",
       "has_child",
@@ -1792,6 +1803,7 @@ app.post("/users", asyncHandler(async (req, res) => {
       name,
       userRole,
       resolvedTeamId,
+      ...(columnSupport.emailNotificationsEnabled ? [userRole === "ADMIN" ? (emailNotificationsEnabled ?? true) : true] : []),
       resolvedWorkingHoursPerDay,
       birthDate ?? null,
       hasChild ?? false,
@@ -1834,6 +1846,7 @@ app.post("/users", asyncHandler(async (req, res) => {
     `
       SELECT id, email, name, role,
         team_id as "teamId",
+        ${columnSupport.emailNotificationsEnabled ? "email_notifications_enabled" : "TRUE"} as "emailNotificationsEnabled",
         ${columnSupport.workingHoursPerDay ? "working_hours_per_day" : `${HOURS_PER_WORKDAY}`} as "workingHoursPerDay",
         ${columnSupport.employmentStartDate ? `employment_start_date::text` : "NULL"} as "employmentStartDate",
         birth_date::text as "birthDate",
@@ -1882,6 +1895,7 @@ app.patch("/users/:id", asyncHandler(async (req, res) => {
     employmentStartDate,
     manualLeaveAllowanceHours,
     manualCarryOverHours,
+    emailNotificationsEnabled,
   } = req.body as {
     email?: string;
     name?: string;
@@ -1895,6 +1909,7 @@ app.patch("/users/:id", asyncHandler(async (req, res) => {
     employmentStartDate?: string | null;
     manualLeaveAllowanceHours?: number | null;
     manualCarryOverHours?: number | null;
+    emailNotificationsEnabled?: boolean;
   };
 
   const before = await queryRow<Record<string, unknown>>("SELECT * FROM users WHERE id = $1", [id]);
@@ -1980,6 +1995,10 @@ app.patch("/users/:id", asyncHandler(async (req, res) => {
     updates.push(`is_active = $${values.length + 1}`);
     values.push(isActive);
   }
+  if (columnSupport.emailNotificationsEnabled && emailNotificationsEnabled !== undefined) {
+    updates.push(`email_notifications_enabled = $${values.length + 1}`);
+    values.push(emailNotificationsEnabled);
+  }
 
   if (updates.length > 0) {
     values.push(id);
@@ -1994,6 +2013,7 @@ app.patch("/users/:id", asyncHandler(async (req, res) => {
     `
       SELECT id, email, name, role,
         team_id as "teamId",
+        ${columnSupport.emailNotificationsEnabled ? "email_notifications_enabled" : "TRUE"} as "emailNotificationsEnabled",
         ${columnSupport.workingHoursPerDay ? "working_hours_per_day" : `${HOURS_PER_WORKDAY}`} as "workingHoursPerDay",
         ${columnSupport.employmentStartDate ? `employment_start_date::text` : "NULL"} as "employmentStartDate",
         birth_date::text as "birthDate",

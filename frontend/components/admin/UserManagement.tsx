@@ -45,6 +45,7 @@ type UserFormValues = {
   hasChild: boolean;
   manualLeaveAllowanceHours: string;
   manualCarryOverHours: string;
+  emailNotificationsEnabled: boolean;
 };
 
 function getDefaultValues(): UserFormValues {
@@ -60,6 +61,7 @@ function getDefaultValues(): UserFormValues {
     hasChild: false,
     manualLeaveAllowanceHours: "",
     manualCarryOverHours: "",
+    emailNotificationsEnabled: true,
   };
 }
 
@@ -97,6 +99,7 @@ export default function UserManagement() {
       employmentStartDate?: string | null;
       manualLeaveAllowanceHours?: number | null;
       manualCarryOverHours?: number | null;
+      emailNotificationsEnabled?: boolean;
     }) => backend.users.create(payload),
     onSuccess: () => {
       toast({ title: "Používateľ bol vytvorený." });
@@ -203,6 +206,10 @@ export default function UserManagement() {
         user.manualCarryOverHours !== null && user.manualCarryOverHours !== undefined
           ? String(user.manualCarryOverHours)
           : "",
+      emailNotificationsEnabled:
+        user.emailNotificationsEnabled !== null && user.emailNotificationsEnabled !== undefined
+          ? Boolean(user.emailNotificationsEnabled)
+          : true,
     });
     setDialogOpen(true);
   };
@@ -276,6 +283,8 @@ export default function UserManagement() {
         values.manualCarryOverHours !== ""
           ? Number(values.manualCarryOverHours)
           : null,
+      emailNotificationsEnabled:
+        values.role === "ADMIN" ? Boolean(values.emailNotificationsEnabled) : true,
     };
 
     if (editingUser) {
@@ -481,6 +490,19 @@ export default function UserManagement() {
                 <p className="text-xs text-muted-foreground">
                   Manažér bude mať prístup k žiadostiam a kalendáru vo vybraných tímoch.
                 </p>
+              </div>
+            )}
+
+            {watch("role") === "ADMIN" && (
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="user-email-notifications-enabled"
+                  checked={watch("emailNotificationsEnabled")}
+                  onCheckedChange={(value) => setValue("emailNotificationsEnabled", Boolean(value))}
+                />
+                <Label htmlFor="user-email-notifications-enabled">
+                  Odosielať notifikácie na email
+                </Label>
               </div>
             )}
 
