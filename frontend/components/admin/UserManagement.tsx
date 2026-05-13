@@ -90,6 +90,17 @@ function convertValueBetweenUnits(value: string, from: UnitType, to: UnitType, w
   return formatUnitValue(convertedValue);
 }
 
+function formatHoursWithDays(hours: number | null | undefined, workingHoursPerDay?: number | null) {
+  const resolvedWorkingHoursPerDay =
+    Number.isFinite(Number(workingHoursPerDay)) && Number(workingHoursPerDay) > 0
+      ? Number(workingHoursPerDay)
+      : 8;
+  const resolvedHours = Number(hours ?? 0);
+  const days = resolvedHours / resolvedWorkingHoursPerDay;
+
+  return `${formatLeaveHours(resolvedHours)} (${formatUnitValue(days)} d)`;
+}
+
 export default function UserManagement() {
   const backend = useBackend();
   const queryClient = useQueryClient();
@@ -419,9 +430,9 @@ export default function UserManagement() {
                   {user.birthDate ? new Date(user.birthDate).toLocaleDateString() : "—"}
                 </TableCell>
                 <TableCell>{user.hasChild ? "Áno" : "Nie"}</TableCell>
-                <TableCell>{formatLeaveHours(user.annualLeaveAllowanceHours)}</TableCell>
-                <TableCell>{formatLeaveHours(user.carryOverHours)}</TableCell>
-                <TableCell>{formatLeaveHours(user.remainingLeaveHours)}</TableCell>
+                <TableCell>{formatHoursWithDays(user.annualLeaveAllowanceHours, user.workingHoursPerDay)}</TableCell>
+                <TableCell>{formatHoursWithDays(user.carryOverHours, user.workingHoursPerDay)}</TableCell>
+                <TableCell>{formatHoursWithDays(user.remainingLeaveHours, user.workingHoursPerDay)}</TableCell>
                 <TableCell>
                   <Badge variant={user.isActive ? "default" : "destructive"}>
                     {user.isActive ? "Aktívny" : "Neaktívny"}
