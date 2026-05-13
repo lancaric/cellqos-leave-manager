@@ -1779,6 +1779,9 @@ app.post("/users", asyncHandler(async (req, res) => {
   if (manualCarryOverHours !== undefined && !columnSupport.manualCarryOverHours) {
     throw new HttpError(500, "Missing database column users.manual_carry_over_hours. Run migrations before saving carry-over overrides.");
   }
+  if (emailNotificationsEnabled !== undefined && !columnSupport.emailNotificationsEnabled) {
+    throw new HttpError(500, "Missing database column users.email_notifications_enabled. Run migrations before saving email notification setting.");
+  }
 
   try {
     const columns = [
@@ -1990,6 +1993,9 @@ app.patch("/users/:id", asyncHandler(async (req, res) => {
       updates.push(`manual_carry_over_hours = $${values.length + 1}`);
       values.push(manualCarryOverHours);
     }
+  }
+  if (emailNotificationsEnabled !== undefined && !columnSupport.emailNotificationsEnabled) {
+    throw new HttpError(500, "Missing database column users.email_notifications_enabled. Run migrations before saving email notification setting.");
   }
   if (isActive !== undefined) {
     updates.push(`is_active = $${values.length + 1}`);
