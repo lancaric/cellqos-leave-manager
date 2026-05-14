@@ -79,11 +79,7 @@
   #ddd 20px
 );
 }
-.calendar-container .rbc-month-view .rbc-date-cell.weekend .rbc-date-cell-content,
-.calendar-container .rbc-month-view .rbc-date-cell.weekend .rbc-button-link {
-  text-decoration: line-through;
-  opacity: 0.7;
-}
+
 
 @media (max-width: 768px) {
   .calendar-container {
