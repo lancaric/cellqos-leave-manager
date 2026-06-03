@@ -47,6 +47,7 @@ export default function CalendarPage() {
   const [date, setDate] = useState(new Date());
   const [view, setView] = useState<CalendarView>("month");
   const [isMobile, setIsMobile] = useState(false);
+  const [expandedMonthDate, setExpandedMonthDate] = useState<string | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<any>(null);
   const [selectedRange, setSelectedRange] = useState<{
@@ -58,6 +59,8 @@ export default function CalendarPage() {
     if (v === "agenda" || v === "work_week") return "month";
     return v as "day" | "week" | "month";
   };
+
+  const toDateKey = (value: Date) => moment(value).format("YYYY-MM-DD");
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(max-width: 640px)");
@@ -72,6 +75,12 @@ export default function CalendarPage() {
     mediaQuery.addEventListener("change", updateLayout);
     return () => mediaQuery.removeEventListener("change", updateLayout);
   }, [view]);
+
+  useEffect(() => {
+    if (view !== "month" && expandedMonthDate) {
+      setExpandedMonthDate(null);
+    }
+  }, [expandedMonthDate, view]);
 
   const startDate = moment(date).startOf(getViewUnit(view)).format("YYYY-MM-DD");
   const endDate = moment(date).endOf(getViewUnit(view)).format("YYYY-MM-DD");
@@ -234,6 +243,60 @@ export default function CalendarPage() {
     setShowCreateDialog(true);
   };
 
+  const MonthShowMoreButton = ({
+    slotDate,
+    count,
+  }: {
+    slotDate: Date;
+    count: number;
+  }) => {
+    const slotDateKey = toDateKey(slotDate);
+
+    return (
+      <button
+        type="button"
+        className="rbc-button-link rbc-show-more"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setExpandedMonthDate(slotDateKey);
+        }}
+      >
+        +{count} ďalšie
+      </button>
+    );
+  };
+
+  const MonthDateHeader = ({
+    date: headerDate,
+    label,
+  }: {
+    date: Date;
+    label: string;
+  }) => {
+    const isExpanded = expandedMonthDate === toDateKey(headerDate);
+
+    return (
+      <div className="month-date-header">
+        <span>{label}</span>
+        {isExpanded ? (
+          <button
+            type="button"
+            className="month-date-header__close"
+            aria-label="Minimalizovať udalosti"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setExpandedMonthDate(null);
+            }}
+          >
+            ×
+          </button>
+        ) : null}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -272,7 +335,7 @@ export default function CalendarPage() {
       ) : null}
 
       <Card className="p-2 sm:p-6">
-        <div className="calendar-container">
+        <div className={`calendar-container${expandedMonthDate && view === "month" ? " calendar-container--month-expanded" : ""}`}>
 <BigCalendar
              localizer={localizer}
              culture="sk"
@@ -282,12 +345,27 @@ export default function CalendarPage() {
              startAccessor="start"
              endAccessor="end"
              style={{ height: isMobile ? 540 : 600, minWidth: 0 }}
+             showAllEvents={view === "month" && expandedMonthDate !== null}
              view={view}
-             onView={(nextView: string) => setView(nextView as CalendarView)}
+             onView={(nextView: string) => {
+               setView(nextView as CalendarView);
+               if (nextView !== "month") {
+                 setExpandedMonthDate(null);
+               }
+             }}
              date={date}
-             onNavigate={setDate}
+             onNavigate={(nextDate: Date) => {
+               setDate(nextDate);
+               setExpandedMonthDate(null);
+             }}
              eventPropGetter={eventStyleGetter}
              dayPropGetter={dayPropGetter}
+             components={{
+               month: {
+                 dateHeader: MonthDateHeader,
+               },
+               showMore: MonthShowMoreButton,
+             }}
              onSelectEvent={(event: CalendarEvent) => {
                if (event.resource?.kind === "HOLIDAY" || event.resource?.kind === "BIRTHDAY") {
                  return;
