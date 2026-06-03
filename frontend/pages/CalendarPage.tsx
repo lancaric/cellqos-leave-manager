@@ -344,7 +344,10 @@ export default function CalendarPage() {
              events={calendarEvents}
              startAccessor="start"
              endAccessor="end"
-             style={{ height: isMobile ? 540 : 600, minWidth: 0 }}
+             style={{
+               height: view === "month" && expandedMonthDate !== null ? "auto" : isMobile ? 540 : 600,
+               minWidth: 0,
+             }}
              showAllEvents={view === "month" && expandedMonthDate !== null}
              view={view}
              onView={(nextView: string) => {

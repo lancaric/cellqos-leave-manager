@@ -64,10 +64,12 @@
 }
 
 .calendar-container--month-expanded .rbc-month-view {
+  display: block;
   height: auto !important;
 }
 
 .calendar-container--month-expanded .rbc-month-row {
+  flex: 0 0 auto;
   overflow: visible;
   height: auto;
   min-height: 10rem;
