@@ -256,6 +256,10 @@ export default function CalendarPage() {
       <button
         type="button"
         className="rbc-button-link rbc-show-more"
+        onMouseDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+        }}
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -284,6 +288,10 @@ export default function CalendarPage() {
             type="button"
             className="month-date-header__close"
             aria-label="Minimalizovať udalosti"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
