@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useBackend } from "@/lib/backend";
+import { useToast } from "@/components/ui/use-toast";
 import { formatRequestRange } from "@/lib/requestDateTime";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -52,6 +53,7 @@ function getNotificationContent(notification: NotificationWithDates) {
 export default function NotificationsPage() {
   const backend = useBackend();
   const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   const notificationsQuery = useQuery({
     queryKey: ["notifications"],
@@ -66,12 +68,57 @@ export default function NotificationsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
     },
+    onError: (error: any) => {
+      toast({
+        title: "Označenie notifikácie zlyhalo",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
   });
 
   const readAllMutation = useMutation({
     mutationFn: async () => backend.notifications.readAll(),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      toast({ title: "Všetky notifikácie boli označené ako prečítané." });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Označenie všetkých notifikácií zlyhalo",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => backend.notifications.remove({ id }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      toast({ title: "Notifikácia bola vymazaná." });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Vymazanie notifikácie zlyhalo",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteAllMutation = useMutation({
+    mutationFn: async () => backend.notifications.removeAll(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      toast({ title: "Notifikácie boli vymazané." });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Vymazanie notifikácií zlyhalo",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
 
@@ -89,6 +136,20 @@ export default function NotificationsPage() {
 
   const notifications = notificationsQuery.data ?? [];
 
+  const handleDelete = (id: number) => {
+    const confirmed = window.confirm("Naozaj chcete vymazať túto notifikáciu?");
+    if (confirmed) {
+      deleteMutation.mutate(id);
+    }
+  };
+
+  const handleDeleteAll = () => {
+    const confirmed = window.confirm("Naozaj chcete vymazať všetky notifikácie?");
+    if (confirmed) {
+      deleteAllMutation.mutate();
+    }
+  };
+
   if (notifications.length === 0) {
     return (
       <Card className="p-8 text-center">
@@ -104,15 +165,26 @@ export default function NotificationsPage() {
           <h2 className="text-lg font-semibold">Notifikácie</h2>
           {unreadCount > 0 && <Badge variant="secondary">{unreadCount} neprečítané</Badge>}
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full sm:w-auto"
-          onClick={() => readAllMutation.mutate()}
-          disabled={readAllMutation.isPending || unreadCount === 0}
-        >
-          Označiť všetko ako prečítané
-        </Button>
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full sm:w-auto"
+            onClick={() => readAllMutation.mutate()}
+            disabled={readAllMutation.isPending || unreadCount === 0}
+          >
+            Označiť všetko ako prečítané
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            className="w-full sm:w-auto"
+            onClick={handleDeleteAll}
+            disabled={deleteAllMutation.isPending || notifications.length === 0}
+          >
+            Vymazať všetko
+          </Button>
+        </div>
       </div>
 
       {notifications.map((notification) => {
@@ -134,17 +206,28 @@ export default function NotificationsPage() {
               </div>
             </div>
 
-            {!notification.readAt && (
+            <div className="flex w-full flex-col gap-2 sm:w-auto">
+              {!notification.readAt && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full sm:w-auto"
+                  onClick={() => readMutation.mutate(notification.id)}
+                  disabled={readMutation.isPending}
+                >
+                  Označiť ako prečítané
+                </Button>
+              )}
               <Button
                 size="sm"
-                variant="outline"
+                variant="destructive"
                 className="w-full sm:w-auto"
-                onClick={() => readMutation.mutate(notification.id)}
-                disabled={readMutation.isPending}
+                onClick={() => handleDelete(notification.id)}
+                disabled={deleteMutation.isPending}
               >
-                Označiť ako prečítané
+                Vymazať
               </Button>
-            )}
+            </div>
           </Card>
         );
       })}
