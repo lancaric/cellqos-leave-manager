@@ -157,6 +157,9 @@ export function createApiClient(token: string | null) {
       read: (data: { id: number }) =>
         apiRequest<{ ok: true }>(`/notifications/${data.id}/read`, { method: "POST", token }),
       readAll: () => apiRequest<{ ok: true }>("/notifications/read-all", { method: "POST", token }),
+      remove: (data: { id: number }) =>
+        apiRequest<{ ok: true }>(`/notifications/${data.id}`, { method: "DELETE", token }),
+      removeAll: () => apiRequest<{ ok: true }>("/notifications", { method: "DELETE", token }),
     },
     database: {
       export: () => apiRequest<any>("/admin/database/export", { token }),
