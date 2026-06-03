@@ -19,7 +19,7 @@ var __privateWrapper = (obj, member, setter, getter) => ({
   }
 });
 var require_index_001 = __commonJS({
-  "assets/index-jjtUYLKW.js"(exports, module) {
+  "assets/index-BXYNrGC6.js"(exports, module) {
     var _provider, _providerCalled, _a, _focused, _cleanup, _setup, _b, _online, _cleanup2, _setup2, _c, _gcTimeout, _d, _initialState, _revertState, _cache, _client, _retryer, _defaultOptions, _abortSignalConsumed, _Query_instances, dispatch_fn, _e, _client2, _currentQuery, _currentQueryInitialState, _currentResult, _currentResultState, _currentResultOptions, _currentThenable, _selectError, _selectFn, _selectResult, _lastQueryWithDefinedData, _staleTimeoutId, _refetchIntervalId, _currentRefetchInterval, _trackedProps, _QueryObserver_instances, executeFetch_fn, updateStaleTimeout_fn, computeRefetchInterval_fn, updateRefetchInterval_fn, updateTimers_fn, clearStaleTimeout_fn, clearRefetchInterval_fn, updateQuery_fn, notify_fn, _f, _client3, _observers, _mutationCache, _retryer2, _Mutation_instances, dispatch_fn2, _g, _mutations, _scopes, _mutationId, _h, _client4, _currentResult2, _currentMutation, _mutateOptions, _MutationObserver_instances, updateResult_fn, notify_fn2, _i, _queries, _j, _queryCache, _mutationCache2, _defaultOptions2, _queryDefaults, _mutationDefaults, _mountCount, _unsubscribeFocus, _unsubscribeOnline, _k;
     function _mergeNamespaces(n, m) {
       for (var i = 0; i < m.length; i++) {
@@ -23012,7 +23012,7 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
         { path: "/calendar", label: "Kalendár", icon: Calendar$2, roles: ["EMPLOYEE", "MANAGER", "ADMIN"] },
         { path: "/my-requests", label: "Moje žiadosti", icon: FileText, roles: ["EMPLOYEE", "MANAGER", "ADMIN"] },
         { path: "/notifications", label: "Notifikácie", icon: Bell, roles: ["EMPLOYEE", "MANAGER", "ADMIN"] },
-        { path: "/team", label: "Tím", icon: Users, roles: ["MANAGER", "ADMIN"] },
+        { path: "/team", label: "Tím", icon: Users, roles: ["EMPLOYEE", "MANAGER", "ADMIN"] },
         { path: "/approvals", label: "Schvaľovanie", icon: SquareCheckBig, roles: ["MANAGER", "ADMIN"] },
         { path: "/stats", label: "Štatistiky", icon: ChartColumn, roles: ["MANAGER", "ADMIN"] },
         { path: "/admin", label: "Administrácia", icon: Settings, roles: ["ADMIN"] }
@@ -50808,19 +50808,47 @@ For more information, see https://radix-ui.com/primitives/docs/components/${titl
       const isManager = (user == null ? void 0 : user.role) === "MANAGER" || (user == null ? void 0 : user.role) === "ADMIN";
       const [activeTab, setActiveTab] = reactExports.useState("all");
       const [showCreateDialog, setShowCreateDialog] = reactExports.useState(false);
+      const { data: meData } = useQuery({
+        queryKey: ["me"],
+        enabled: Boolean(user),
+        queryFn: async () => backend.users.me()
+      });
       const { data: teamsData } = useQuery({
         queryKey: ["teams"],
         queryFn: async () => backend.teams.list()
       });
-      const teamId = activeTab === "all" ? void 0 : Number.parseInt(activeTab, 10);
-      const teamFilter = Number.isNaN(teamId) ? void 0 : teamId;
+      const visibleTeams = reactExports.useMemo(() => {
+        const teams = (teamsData == null ? void 0 : teamsData.teams) || [];
+        if (isManager) {
+          return teams;
+        }
+        if (!(meData == null ? void 0 : meData.teamId)) {
+          return [];
+        }
+        return teams.filter((team) => team.id === meData.teamId);
+      }, [isManager, meData == null ? void 0 : meData.teamId, teamsData == null ? void 0 : teamsData.teams]);
+      reactExports.useEffect(() => {
+        if (isManager) {
+          return;
+        }
+        if (visibleTeams.length === 0) {
+          setActiveTab("all");
+          return;
+        }
+        const ownTeamTab = String(visibleTeams[0].id);
+        if (activeTab !== ownTeamTab) {
+          setActiveTab(ownTeamTab);
+        }
+      }, [activeTab, isManager, visibleTeams]);
+      const parsedTeamId = activeTab === "all" ? void 0 : Number.parseInt(activeTab, 10);
+      const selectedTeamId = Number.isNaN(parsedTeamId) ? void 0 : parsedTeamId;
+      const teamFilter = isManager ? selectedTeamId : (meData == null ? void 0 : meData.teamId) ?? selectedTeamId;
       const { data: requestsData, isLoading, refetch } = useQuery({
         queryKey: ["team-requests", teamFilter ?? "all"],
         queryFn: async () => {
           return backend.leave_requests.list(teamFilter ? { teamId: teamFilter } : {});
         }
       });
-      const teams = (teamsData == null ? void 0 : teamsData.teams) || [];
       const allRequests = (requestsData == null ? void 0 : requestsData.requests) || [];
       return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-6", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between", children: [
@@ -50829,11 +50857,11 @@ For more information, see https://radix-ui.com/primitives/docs/components/${titl
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs(Tabs, { value: activeTab, onValueChange: setActiveTab, children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs(TabsList, { children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(TabsTrigger, { value: "all", children: "Všetky tímy" }),
-            teams.map((team) => /* @__PURE__ */ jsxRuntimeExports.jsx(TabsTrigger, { value: String(team.id), children: team.name }, team.id))
+            isManager && /* @__PURE__ */ jsxRuntimeExports.jsx(TabsTrigger, { value: "all", children: "Všetky tímy" }),
+            visibleTeams.map((team) => /* @__PURE__ */ jsxRuntimeExports.jsx(TabsTrigger, { value: String(team.id), children: team.name }, team.id))
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(TabsContent, { value: "all", className: "mt-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(RequestsList, { requests: allRequests, isLoading, onUpdate: refetch, showUser: true }) }),
-          teams.map((team) => /* @__PURE__ */ jsxRuntimeExports.jsx(TabsContent, { value: String(team.id), className: "mt-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(RequestsList, { requests: allRequests, isLoading, onUpdate: refetch, showUser: true }) }, team.id))
+          isManager && /* @__PURE__ */ jsxRuntimeExports.jsx(TabsContent, { value: "all", className: "mt-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(RequestsList, { requests: allRequests, isLoading, onUpdate: refetch, showUser: true }) }),
+          visibleTeams.map((team) => /* @__PURE__ */ jsxRuntimeExports.jsx(TabsContent, { value: String(team.id), className: "mt-6", children: /* @__PURE__ */ jsxRuntimeExports.jsx(RequestsList, { requests: allRequests, isLoading, onUpdate: refetch, showUser: true }) }, team.id))
         ] }),
         showCreateDialog && /* @__PURE__ */ jsxRuntimeExports.jsx(
           RequestFormDialog,
@@ -53873,7 +53901,7 @@ For more information, see https://radix-ui.com/primitives/docs/components/${titl
             Route,
             {
               path: "/team",
-              element: /* @__PURE__ */ jsxRuntimeExports.jsx(RequireRole, { roles: ["MANAGER", "ADMIN"], children: /* @__PURE__ */ jsxRuntimeExports.jsx(TeamPage, {}) })
+              element: /* @__PURE__ */ jsxRuntimeExports.jsx(RequireRole, { roles: ["EMPLOYEE", "MANAGER", "ADMIN"], children: /* @__PURE__ */ jsxRuntimeExports.jsx(TeamPage, {}) })
             }
           ),
           /* @__PURE__ */ jsxRuntimeExports.jsx(

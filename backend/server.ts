@@ -373,6 +373,30 @@ function takeDirectoryString(entry: Record<string, unknown>, key: string): strin
   return null;
 }
 
+function isLdapConnectivityError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const message = "message" in error && typeof error.message === "string"
+    ? error.message.toLowerCase()
+    : "";
+  const code = "code" in error && typeof error.code === "string"
+    ? error.code.toUpperCase()
+    : "";
+
+  return (
+    message.includes("timeout")
+    || message.includes("connect")
+    || message.includes("socket")
+    || code === "ETIMEDOUT"
+    || code === "ECONNRESET"
+    || code === "ECONNREFUSED"
+    || code === "ENOTFOUND"
+    || code === "EHOSTUNREACH"
+  );
+}
+
 async function searchLdapUser(identifier: string): Promise<LdapDirectoryUser | null> {
   const config = getLdapConfig();
   if (!config) {
@@ -430,6 +454,11 @@ async function searchLdapUser(identifier: string): Promise<LdapDirectoryUser | n
       email: email.toLowerCase(),
       displayName,
     };
+  } catch (error) {
+    if (isLdapConnectivityError(error)) {
+      throw new HttpError(503, "LDAP service is unavailable");
+    }
+    throw error;
   } finally {
     await client.unbind().catch(() => undefined);
   }
@@ -546,6 +575,22 @@ async function authenticateWithLocalPassword(identifier: string, password: strin
     `,
     [identifier, password]
   );
+}
+
+async function hasLocalPasswordAccount(identifier: string): Promise<boolean> {
+  const existing = await queryRow<{ id: string }>(
+    `
+      SELECT id
+      FROM users
+      WHERE lower(email) = lower($1)
+        AND is_active = true
+        AND password_hash IS NOT NULL
+      LIMIT 1
+    `,
+    [identifier]
+  );
+
+  return Boolean(existing);
 }
 
 async function createAuditLog(
@@ -1370,6 +1415,10 @@ app.post("/auth/login", asyncHandler(async (req, res) => {
 
     res.json({ token, user: localUser });
     return;
+  }
+
+  if (await hasLocalPasswordAccount(identifier)) {
+    throw new HttpError(401, "Invalid login or password");
   }
 
   const ldapDirectoryUser = await authenticateWithLdap(identifier, password);
@@ -2509,9 +2558,21 @@ app.get("/leave-requests", asyncHandler(async (req, res) => {
   const auth = requireAuth(req.auth ?? null);
   const isAdminUser = isAdmin(auth.role);
   const isManagerUser = isManager(auth.role);
+  const viewerId = auth.userID;
   let managerTeamIds: number[] = [];
+  let viewerTeamId: number | null = null;
   if (isManagerUser && !isAdminUser) {
     managerTeamIds = await getManagedTeamIds(auth.userID);
+  }
+  if (!isManagerUser && !isAdminUser) {
+    const viewer = await queryRow<{ teamId: number | null }>(
+      "SELECT team_id as \"teamId\" FROM users WHERE id = $1",
+      [viewerId]
+    );
+    if (!viewer) {
+      throw new HttpError(404, "User not found");
+    }
+    viewerTeamId = viewer.teamId;
   }
   const conditions: string[] = ["1=1"];
   const values: any[] = [];
@@ -2524,10 +2585,16 @@ app.get("/leave-requests", asyncHandler(async (req, res) => {
   const teamId = req.query.teamId ? Number(req.query.teamId) : undefined;
 
   if (userId) {
-    if (!isManagerUser && !isAdminUser && userId !== auth.userID) {
-      throw new HttpError(403, "Not allowed to view other users' requests");
+    if (!isManagerUser && !isAdminUser && userId !== viewerId) {
+      const target = await queryRow<{ teamId: number | null }>(
+        "SELECT team_id as \"teamId\" FROM users WHERE id = $1",
+        [userId]
+      );
+      if (!target || viewerTeamId === null || target.teamId !== viewerTeamId) {
+        throw new HttpError(403, "Not allowed to view other users' requests");
+      }
     }
-    if (isManagerUser && !isAdminUser && userId !== auth.userID) {
+    if (isManagerUser && !isAdminUser && userId !== viewerId) {
       const target = await queryRow<{ teamId: number | null }>(
         "SELECT team_id as \"teamId\" FROM users WHERE id = $1",
         [userId]
@@ -2541,8 +2608,13 @@ app.get("/leave-requests", asyncHandler(async (req, res) => {
   }
 
   if (!isManagerUser && !isAdminUser && !userId) {
-    conditions.push(`lr.user_id = $${values.length + 1}`);
-    values.push(auth.userID);
+    if (viewerTeamId !== null) {
+      conditions.push(`u.team_id = $${values.length + 1}`);
+      values.push(viewerTeamId);
+    } else {
+      conditions.push(`lr.user_id = $${values.length + 1}`);
+      values.push(viewerId);
+    }
   }
 
   if (isManagerUser && !isAdminUser && !userId) {
@@ -2570,6 +2642,9 @@ app.get("/leave-requests", asyncHandler(async (req, res) => {
   }
 
   if (teamId) {
+    if (!isManagerUser && !isAdminUser && teamId !== viewerTeamId) {
+      throw new HttpError(403, "Not allowed to view other teams' requests");
+    }
     if (isManagerUser && !isAdminUser && !managerTeamIds.includes(teamId)) {
       throw new HttpError(403, "Not allowed to view other teams' requests");
     }
@@ -2601,6 +2676,16 @@ app.get("/leave-requests", asyncHandler(async (req, res) => {
     `;
 
   const requests = await queryRows<LeaveRequest>(query, values);
+  const scopedRequests = requests.map((request) => {
+    if (!isManagerUser && !isAdminUser && request.userId !== viewerId) {
+      return {
+        ...request,
+        reason: null,
+        managerComment: null,
+      };
+    }
+    return request;
+  });
 
   const currentYear = new Date().getFullYear();
   const bookedRows = await queryRows<{ userId: string; total: number }>(
@@ -2620,7 +2705,7 @@ app.get("/leave-requests", asyncHandler(async (req, res) => {
   );
 
   const requestsWithBalance = await Promise.all(
-    requests.map(async (request) => {
+    scopedRequests.map(async (request) => {
       if (request.type !== "ANNUAL_LEAVE") {
         return {
           ...request,
@@ -3584,9 +3669,9 @@ app.get("/calendar", asyncHandler(async (req, res) => {
   const viewerId = auth.userID;
   let viewerTeamId: number | null = null;
   let managerTeamIds: number[] = [];
-  const showTeamCalendarForEmployees = await getShowTeamCalendarForEmployees();
+  let visibleTeamIds: number[] = [];
 
-  if (!isAdminUser && !isManagerUser) {
+  if (!isAdminUser) {
     const viewer = await queryRow<{ teamId: number | null }>(
       "SELECT team_id as \"teamId\" FROM users WHERE id = $1",
       [viewerId]
@@ -3601,6 +3686,13 @@ app.get("/calendar", asyncHandler(async (req, res) => {
 
   if (isManagerUser && !isAdminUser) {
     managerTeamIds = await getManagedTeamIds(viewerId);
+    visibleTeamIds = Array.from(
+      new Set(
+        [viewerTeamId, ...managerTeamIds].filter((value): value is number => Number.isFinite(value) && value !== null)
+      )
+    );
+  } else if (!isAdminUser && viewerTeamId !== null) {
+    visibleTeamIds = [viewerTeamId];
   }
 
   if (!startDate || !endDate) {
@@ -3616,7 +3708,7 @@ app.get("/calendar", asyncHandler(async (req, res) => {
   const values: any[] = [startDate, endDate];
 
   if ((isManagerUser || isAdminUser) && teamId) {
-    if (isManagerUser && !isAdminUser && !managerTeamIds.includes(teamId)) {
+    if (isManagerUser && !isAdminUser && !visibleTeamIds.includes(teamId)) {
       throw new HttpError(403, "Cannot access another team's calendar");
     }
     conditions.push(`u.team_id = $${values.length + 1}`);
@@ -3624,11 +3716,19 @@ app.get("/calendar", asyncHandler(async (req, res) => {
   }
 
   if (isManagerUser && !isAdminUser && !teamId) {
-    addTeamScopeFilter(conditions, values, "u.team_id", managerTeamIds);
+    if (visibleTeamIds.length > 0) {
+      addTeamScopeFilter(conditions, values, "u.team_id", visibleTeamIds);
+    } else {
+      conditions.push(`lr.user_id = $${values.length + 1}`);
+      values.push(viewerId);
+    }
   }
 
   if (!isManagerUser && !isAdminUser) {
-    if (showTeamCalendarForEmployees && viewerTeamId) {
+    if (teamId && teamId !== viewerTeamId) {
+      throw new HttpError(403, "Cannot access another team's calendar");
+    }
+    if (viewerTeamId) {
       conditions.push(`u.team_id = $${values.length + 1}`);
       values.push(viewerTeamId);
     } else {
@@ -3666,7 +3766,7 @@ app.get("/calendar", asyncHandler(async (req, res) => {
   const safeEvents = events.map((event) => {
     if (!isAdminUser && event.userId !== viewerId) {
       const isSameTeam = isManagerUser
-        ? managerTeamIds.includes(event.teamId)
+        ? visibleTeamIds.includes(event.teamId)
         : viewerTeamId !== null && viewerTeamId === event.teamId;
       if (!isManagerUser || !isSameTeam) {
         return {
@@ -3680,32 +3780,6 @@ app.get("/calendar", asyncHandler(async (req, res) => {
     return event;
   });
 
-  // Birthday events are derived from users in the same visibility scope as this calendar request.
-  const userConditions: string[] = ["is_active = true", "birth_date IS NOT NULL"];
-  const userValues: any[] = [];
-
-  if ((isManagerUser || isAdminUser) && teamId) {
-    if (isManagerUser && !isAdminUser && !managerTeamIds.includes(teamId)) {
-      throw new HttpError(403, "Cannot access another team's calendar");
-    }
-    userConditions.push(`team_id = $${userValues.length + 1}`);
-    userValues.push(teamId);
-  }
-
-  if (isManagerUser && !isAdminUser && !teamId) {
-    addTeamScopeFilter(userConditions, userValues, "team_id", managerTeamIds);
-  }
-
-  if (!isManagerUser && !isAdminUser) {
-    if (showTeamCalendarForEmployees && viewerTeamId) {
-      userConditions.push(`team_id = $${userValues.length + 1}`);
-      userValues.push(viewerTeamId);
-    } else {
-      userConditions.push(`id = $${userValues.length + 1}`);
-      userValues.push(viewerId);
-    }
-  }
-
   const birthdayUsers = await queryRows<{
     id: string;
     name: string;
@@ -3714,10 +3788,11 @@ app.get("/calendar", asyncHandler(async (req, res) => {
     `
       SELECT id, name, birth_date::date::text as "birthDate"
       FROM users
-      WHERE ${userConditions.join(" AND ")}
+      WHERE is_active = true
+        AND birth_date IS NOT NULL
       ORDER BY name ASC
     `,
-    userValues
+    []
   );
 
   const startYear = Number(startDate.slice(0, 4));
@@ -3806,58 +3881,13 @@ async function fetchSlovakNamedayToday(): Promise<{
 }
 
 app.get("/namedays/today", asyncHandler(async (req, res) => {
-  const auth = requireAuth(req.auth ?? null);
-  const isAdminUser = isAdmin(auth.role);
-  const isManagerUser = isManager(auth.role);
-  const viewerId = auth.userID;
-  const showTeamCalendarForEmployees = await getShowTeamCalendarForEmployees();
-
-  let viewerTeamId: number | null = null;
-  let managerTeamIds: number[] = [];
-  if (!isAdminUser) {
-    const viewer = await queryRow<{ teamId: number | null }>(
-      "SELECT team_id as \"teamId\" FROM users WHERE id = $1",
-      [viewerId]
-    );
-    viewerTeamId = viewer?.teamId ?? null;
-  }
-
-  if (isManagerUser && !isAdminUser) {
-    managerTeamIds = await getManagedTeamIds(viewerId);
-  }
+  requireAuth(req.auth ?? null);
 
   const { date, names, source, providerStatus } = await fetchSlovakNamedayToday();
 
-  // Determine visible users similarly to the calendar endpoint (team-scoped for employees).
-  const conditions: string[] = ["is_active = true"];
-  const values: any[] = [];
-
-  const teamId = req.query.teamId ? Number(req.query.teamId) : undefined;
-  if ((isManagerUser || isAdminUser) && teamId) {
-    if (isManagerUser && !isAdminUser && !managerTeamIds.includes(teamId)) {
-      throw new HttpError(403, "Cannot access another team's namedays");
-    }
-    conditions.push(`team_id = $${values.length + 1}`);
-    values.push(teamId);
-  }
-
-  if (isManagerUser && !isAdminUser && !teamId) {
-    addTeamScopeFilter(conditions, values, "team_id", managerTeamIds);
-  }
-
-  if (!isManagerUser && !isAdminUser) {
-    if (showTeamCalendarForEmployees && viewerTeamId) {
-      conditions.push(`team_id = $${values.length + 1}`);
-      values.push(viewerTeamId);
-    } else {
-      conditions.push(`id = $${values.length + 1}`);
-      values.push(viewerId);
-    }
-  }
-
   const users = await queryRows<{ id: string; name: string }>(
-    `SELECT id, name FROM users WHERE ${conditions.join(" AND ")} ORDER BY name ASC`,
-    values
+    "SELECT id, name FROM users WHERE is_active = true ORDER BY name ASC",
+    []
   );
 
   const normalizedNamedays = new Set(names.map((n) => stripDiacritics(n).toLowerCase()));

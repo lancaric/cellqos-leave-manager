@@ -29,7 +29,7 @@ export default function Navigation() {
     { path: "/calendar", label: "Kalendár", icon: Calendar, roles: ["EMPLOYEE", "MANAGER", "ADMIN"] },
     { path: "/my-requests", label: "Moje žiadosti", icon: FileText, roles: ["EMPLOYEE", "MANAGER", "ADMIN"] },
     { path: "/notifications", label: "Notifikácie", icon: Bell, roles: ["EMPLOYEE", "MANAGER", "ADMIN"] },
-    { path: "/team", label: "Tím", icon: Users, roles: ["MANAGER", "ADMIN"] },
+    { path: "/team", label: "Tím", icon: Users, roles: ["EMPLOYEE", "MANAGER", "ADMIN"] },
     { path: "/approvals", label: "Schvaľovanie", icon: CheckSquare, roles: ["MANAGER", "ADMIN"] },
     { path: "/stats", label: "Štatistiky", icon: BarChart3, roles: ["MANAGER", "ADMIN"] },
     { path: "/admin", label: "Administrácia", icon: Settings, roles: ["ADMIN"] },

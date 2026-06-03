@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useBackend } from "@/lib/backend";
 import { useAuth } from "@/lib/auth";
@@ -14,13 +14,45 @@ export default function TeamPage() {
   const [activeTab, setActiveTab] = useState("all");
   const [showCreateDialog, setShowCreateDialog] = useState(false);
 
+  const { data: meData } = useQuery({
+    queryKey: ["me"],
+    enabled: Boolean(user),
+    queryFn: async () => backend.users.me(),
+  });
+
   const { data: teamsData } = useQuery({
     queryKey: ["teams"],
     queryFn: async () => backend.teams.list(),
   });
 
-  const teamId = activeTab === "all" ? undefined : Number.parseInt(activeTab, 10);
-  const teamFilter = Number.isNaN(teamId) ? undefined : teamId;
+  const visibleTeams = useMemo(() => {
+    const teams = teamsData?.teams || [];
+    if (isManager) {
+      return teams;
+    }
+    if (!meData?.teamId) {
+      return [];
+    }
+    return teams.filter((team) => team.id === meData.teamId);
+  }, [isManager, meData?.teamId, teamsData?.teams]);
+
+  useEffect(() => {
+    if (isManager) {
+      return;
+    }
+    if (visibleTeams.length === 0) {
+      setActiveTab("all");
+      return;
+    }
+    const ownTeamTab = String(visibleTeams[0].id);
+    if (activeTab !== ownTeamTab) {
+      setActiveTab(ownTeamTab);
+    }
+  }, [activeTab, isManager, visibleTeams]);
+
+  const parsedTeamId = activeTab === "all" ? undefined : Number.parseInt(activeTab, 10);
+  const selectedTeamId = Number.isNaN(parsedTeamId) ? undefined : parsedTeamId;
+  const teamFilter = isManager ? selectedTeamId : meData?.teamId ?? selectedTeamId;
 
   const { data: requestsData, isLoading, refetch } = useQuery({
     queryKey: ["team-requests", teamFilter ?? "all"],
@@ -29,7 +61,6 @@ export default function TeamPage() {
     },
   });
 
-  const teams = teamsData?.teams || [];
   const allRequests = requestsData?.requests || [];
 
   return (
@@ -45,19 +76,21 @@ export default function TeamPage() {
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
-          <TabsTrigger value="all">Všetky tímy</TabsTrigger>
-          {teams.map((team) => (
+          {isManager && <TabsTrigger value="all">Všetky tímy</TabsTrigger>}
+          {visibleTeams.map((team) => (
             <TabsTrigger key={team.id} value={String(team.id)}>
               {team.name}
             </TabsTrigger>
           ))}
         </TabsList>
 
-        <TabsContent value="all" className="mt-6">
-          <RequestsList requests={allRequests} isLoading={isLoading} onUpdate={refetch} showUser />
-        </TabsContent>
+        {isManager && (
+          <TabsContent value="all" className="mt-6">
+            <RequestsList requests={allRequests} isLoading={isLoading} onUpdate={refetch} showUser />
+          </TabsContent>
+        )}
 
-        {teams.map((team) => (
+        {visibleTeams.map((team) => (
           <TabsContent key={team.id} value={String(team.id)} className="mt-6">
             <RequestsList requests={allRequests} isLoading={isLoading} onUpdate={refetch} showUser />
           </TabsContent>
