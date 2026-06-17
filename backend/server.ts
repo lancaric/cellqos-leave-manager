@@ -1064,6 +1064,11 @@ function formatReportDate(date: string) {
   return `${day}.${month}.${year}`;
 }
 
+function formatReportDateShort(date: string) {
+  const [, month, day] = date.split("-");
+  return `${day}.${month}.`;
+}
+
 function formatExportNumber(value: number) {
   const rounded = Math.round((value + Number.EPSILON) * 100) / 100;
   if (Number.isInteger(rounded)) {
@@ -1127,7 +1132,7 @@ function formatLeaveTerm(startDate: string, endDate: string) {
   if (startDate === endDate) {
     return formatReportDate(startDate);
   }
-  return `${formatReportDate(startDate)} - ${formatReportDate(endDate)}`;
+  return `${formatReportDateShort(startDate)} - ${formatReportDate(endDate)}`;
 }
 
 async function generateMonthlyLeaveReportExport(

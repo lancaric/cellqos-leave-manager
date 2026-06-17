@@ -18,6 +18,7 @@ import sys
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
@@ -119,6 +120,24 @@ def format_number(value: Decimal | float | int) -> str:
     if "." in text:
         text = text.rstrip("0").rstrip(".")
     return text or "0"
+
+
+def format_terms_for_pdf(value: object) -> str:
+    raw = str(value).strip()
+    if not raw or raw == "\u2013":
+        return escape(raw or "\u2013")
+
+    terms = []
+    for part in raw.split(";"):
+        term = part.strip()
+        if not term:
+            continue
+        if " - " in term:
+            start, end = term.split(" - ", 1)
+            term = f"{start}&nbsp;-&nbsp;{end}"
+        terms.append(escape(term).replace("&amp;nbsp;", "&nbsp;"))
+
+    return "<br/>".join(terms) if terms else "\u2013"
 
 
 def read_employees(csv_path: str) -> list[dict[str, object]]:
@@ -311,7 +330,7 @@ def build_pdf(rows: list[dict[str, object]], output_path: Path, logo_path: str |
                 Paragraph(format_number(row["cerpane_mesiac"]), style_td),
                 Paragraph(format_number(row["cerpane_rok"]), style_td),
                 Paragraph(format_number(row["zostatok"]), style_td),
-                Paragraph(str(row["terminy"]), style_td_left),
+                Paragraph(format_terms_for_pdf(row["terminy"]), style_td_left),
             ]
         )
 
@@ -332,7 +351,7 @@ def build_pdf(rows: list[dict[str, object]], output_path: Path, logo_path: str |
         ]
     )
 
-    col_fracs = [0.040, 0.205, 0.190, 0.100, 0.110, 0.112, 0.105, 0.138]
+    col_fracs = [0.040, 0.200, 0.180, 0.100, 0.110, 0.090, 0.100, 0.18]
     col_widths = [fraction * CONTENT_W for fraction in col_fracs]
     main_table = Table(table_data, colWidths=col_widths, repeatRows=1)
 
