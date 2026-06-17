@@ -12,7 +12,8 @@ import type { StatsExportFormat, StatsReportType } from "~backend/shared/types";
 const reportOptions: Array<{ value: StatsReportType; label: string }> = [
   { value: "DASHBOARD_SUMMARY", label: "Dashboard - súhrn" },
   { value: "TABLE_DETAIL", label: "Tabuľka - detail" },
-  { value: "YEAR_CALENDAR", label: "Rokový kalendár" },
+  { value: "YEAR_CALENDAR", label: "Ročný kalendár" },
+  { value: "MONTHLY_LEAVE_REPORT", label: "Mesačný report dovoleniek" },
 ];
 
 const formatOptions: Array<{ value: StatsExportFormat; label: string }> = [
@@ -41,6 +42,8 @@ export default function StatsExportPage() {
   const [reportType, setReportType] = useState<StatsReportType>("DASHBOARD_SUMMARY");
   const [format, setFormat] = useState<StatsExportFormat>("PDF");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+
+  const isMonthlyLeaveReport = reportType === "MONTHLY_LEAVE_REPORT";
 
   const { data: teamsData } = useQuery({
     queryKey: ["teams"],
@@ -74,7 +77,7 @@ export default function StatsExportPage() {
     try {
       await backend.stats.exports.create({
         reportType,
-        format,
+        format: isMonthlyLeaveReport ? "PDF" : format,
         filters: appliedQuery,
       });
       await exportsQuery.refetch();
@@ -153,7 +156,13 @@ export default function StatsExportPage() {
             <label className="text-sm font-medium">Typ reportu</label>
             <select
               value={reportType}
-              onChange={(event) => setReportType(event.target.value as StatsReportType)}
+              onChange={(event) => {
+                const nextReportType = event.target.value as StatsReportType;
+                setReportType(nextReportType);
+                if (nextReportType === "MONTHLY_LEAVE_REPORT") {
+                  setFormat("PDF");
+                }
+              }}
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
             >
               {reportOptions.map((option) => (
@@ -168,14 +177,24 @@ export default function StatsExportPage() {
             <select
               value={format}
               onChange={(event) => setFormat(event.target.value as StatsExportFormat)}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              disabled={isMonthlyLeaveReport}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-70"
             >
               {formatOptions.map((option) => (
-                <option key={option.value} value={option.value}>
+                <option
+                  key={option.value}
+                  value={option.value}
+                  disabled={isMonthlyLeaveReport && option.value !== "PDF"}
+                >
                   {option.label}
                 </option>
               ))}
             </select>
+            {isMonthlyLeaveReport && (
+              <p className="text-xs text-muted-foreground">
+                Mesačný dovolenkový report sa generuje iba ako PDF podľa firemnej predlohy.
+              </p>
+            )}
           </div>
           <div className="flex items-end">
             <Button onClick={handleGenerate} className="w-full md:w-auto">

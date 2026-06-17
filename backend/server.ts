@@ -2,10 +2,15 @@ import "dotenv/config";
 import express, { type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
 import fs from "fs";
+import os from "os";
+import path from "path";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import jwt, { type SignOptions } from "jsonwebtoken";
 import { Client as LdapClient } from "ldapts";
 import { randomUUID } from "crypto";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import { fileURLToPath } from "url";
 import { computeWorkingHours, parseDate, formatDate, addDays, HOURS_PER_WORKDAY } from "./shared/date-utils";
 import { getSlovakHolidaySeeds } from "./shared/holiday-seeds";
 import { validateDateRange, validateNotInPast, validateEmail } from "./shared/validation";
@@ -42,6 +47,10 @@ import { HttpError } from "./shared/http-error";
 const app = express();
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const jwtSecret = process.env.JWT_SECRET;
+const execFileAsync = promisify(execFile);
+const backendDir = path.dirname(fileURLToPath(import.meta.url));
+const projectRootDir = path.resolve(backendDir, "..");
+const exportAssetsDir = path.join(projectRootDir, "export");
 
 if (!jwtSecret) {
   throw new Error("JWT_SECRET is required");
@@ -678,8 +687,15 @@ type VacationPolicyColumnSupport = {
   hasPolicyColumns: boolean;
 };
 
+type StoredStatsExportJob = StatsExportJob & {
+  content?: string | null;
+  binaryContent?: Buffer | null;
+  contentType?: string | null;
+  filename?: string | null;
+};
+
 const columnSupportCache = new Map<string, boolean>();
-const statsExportJobs = new Map<string, StatsExportJob & { content?: string | null }>();
+const statsExportJobs = new Map<string, StoredStatsExportJob>();
 
 async function columnExists(table: string, column: string): Promise<boolean> {
   const cacheKey = `${table}.${column}`;
@@ -1013,6 +1029,305 @@ async function getAnnualLeaveBreakdownForUser(
 async function getAnnualLeaveAllowanceHoursForUser(userId: string, year: number, skipCarryOver?: boolean): Promise<number> {
   const breakdown = await getAnnualLeaveBreakdownForUser(userId, year, skipCarryOver);
   return breakdown.totalAllowanceHours;
+}
+
+function getPreviousMonthPeriod(today = new Date()) {
+  const previous = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
+  return {
+    month: previous.getUTCMonth() + 1,
+    year: previous.getUTCFullYear(),
+  };
+}
+
+function getMonthDateRange(year: number, month: number) {
+  const startDate = `${year}-${pad2(month)}-01`;
+  const endDate = formatDate(new Date(Date.UTC(year, month, 0)));
+  return { startDate, endDate };
+}
+
+function getMonthlyLeaveExportPeriod(filters: {
+  year?: number;
+  month?: number;
+}) {
+  const previous = getPreviousMonthPeriod();
+  const month = filters.month ?? previous.month;
+  const year = filters.year ?? previous.year;
+  return {
+    month,
+    year,
+    ...getMonthDateRange(year, month),
+  };
+}
+
+function formatReportDate(date: string) {
+  const [year, month, day] = date.split("-");
+  return `${day}.${month}.${year}`;
+}
+
+function formatExportNumber(value: number) {
+  const rounded = Math.round((value + Number.EPSILON) * 100) / 100;
+  if (Number.isInteger(rounded)) {
+    return String(rounded);
+  }
+  return rounded.toFixed(2).replace(/\.?0+$/, "");
+}
+
+function escapeCsvValue(value: string) {
+  if (/[",\n]/.test(value)) {
+    return `"${value.replace(/"/g, "\"\"")}"`;
+  }
+  return value;
+}
+
+function getDateOverlap(
+  startDate: string,
+  endDate: string,
+  rangeStart: string,
+  rangeEnd: string
+) {
+  const overlapStart = startDate > rangeStart ? startDate : rangeStart;
+  const overlapEnd = endDate < rangeEnd ? endDate : rangeEnd;
+  if (overlapStart > overlapEnd) {
+    return null;
+  }
+  return {
+    startDate: overlapStart,
+    endDate: overlapEnd,
+  };
+}
+
+function computeLeaveHoursWithinRange(
+  request: {
+    startDate: string;
+    endDate: string;
+    startTime?: string | null;
+    endTime?: string | null;
+  },
+  rangeStart: string,
+  rangeEnd: string,
+  holidayDates: Set<string>,
+  workingHoursPerDay: number
+) {
+  const overlap = getDateOverlap(request.startDate, request.endDate, rangeStart, rangeEnd);
+  if (!overlap) {
+    return 0;
+  }
+
+  return computeWorkingHours(
+    overlap.startDate,
+    overlap.endDate,
+    holidayDates,
+    workingHoursPerDay,
+    overlap.startDate === request.startDate ? request.startTime ?? null : null,
+    overlap.endDate === request.endDate ? request.endTime ?? null : null
+  );
+}
+
+function formatLeaveTerm(startDate: string, endDate: string) {
+  if (startDate === endDate) {
+    return formatReportDate(startDate);
+  }
+  return `${formatReportDate(startDate)} - ${formatReportDate(endDate)}`;
+}
+
+async function generateMonthlyLeaveReportExport(
+  auth: AuthUser,
+  filters: {
+    year?: number;
+    month?: number;
+    quarter?: number;
+    teamId?: number;
+    memberIds?: string[];
+    eventTypes?: LeaveType[];
+  },
+  exportSequence: number
+): Promise<{ content: Buffer; contentType: string; filename: string; month: number; year: number }> {
+  const { month, year, startDate, endDate } = getMonthlyLeaveExportPeriod(filters);
+  const scope = await resolveStatsScope(auth, filters.teamId ?? null, filters.memberIds ?? []);
+
+  if (scope.members.length === 0) {
+    throw new HttpError(400, "No active members available for the monthly leave export");
+  }
+
+  const yearStart = `${year}-01-01`;
+  const users = await queryRows<{
+    id: string;
+    name: string;
+    teamName: string | null;
+    workingHoursPerDay: number;
+  }>(
+    `
+      SELECT
+        u.id,
+        u.name,
+        t.name as "teamName",
+        COALESCE(u.working_hours_per_day, $2) as "workingHoursPerDay"
+      FROM users u
+      LEFT JOIN teams t ON t.id = u.team_id
+      WHERE u.id = ANY($1::text[])
+      ORDER BY u.name ASC
+    `,
+    [scope.members.map((member) => member.id), HOURS_PER_WORKDAY]
+  );
+
+  if (users.length === 0) {
+    throw new HttpError(400, "No active members available for the monthly leave export");
+  }
+
+  const holidayRows = await queryRows<{ date: string }>(
+    `
+      SELECT date::date::text as date
+      FROM holidays
+      WHERE date >= $1
+        AND date <= $2
+        AND is_active = true
+    `,
+    [yearStart, endDate]
+  );
+  const holidayDates = new Set(holidayRows.map((row) => row.date));
+
+  const requests = await queryRows<{
+    userId: string;
+    startDate: string;
+    endDate: string;
+    startTime: string | null;
+    endTime: string | null;
+  }>(
+    `
+      SELECT
+        lr.user_id as "userId",
+        lr.start_date::date::text as "startDate",
+        lr.end_date::date::text as "endDate",
+        lr.start_time::text as "startTime",
+        lr.end_time::text as "endTime"
+      FROM leave_requests lr
+      WHERE lr.user_id = ANY($1::text[])
+        AND lr.type = 'ANNUAL_LEAVE'
+        AND lr.status IN ('PENDING', 'APPROVED')
+        AND lr.start_date <= $2
+        AND lr.end_date >= $3
+      ORDER BY lr.user_id ASC, lr.start_date ASC, lr.end_date ASC
+    `,
+    [users.map((user) => user.id), endDate, yearStart]
+  );
+
+  const requestsByUserId = new Map<string, typeof requests>();
+  for (const request of requests) {
+    const userRequests = requestsByUserId.get(request.userId) ?? [];
+    userRequests.push(request);
+    requestsByUserId.set(request.userId, userRequests);
+  }
+
+  const allowanceEntries = await Promise.all(
+    users.map(async (user) => [
+      user.id,
+      await getAnnualLeaveAllowanceHoursForUser(user.id, year),
+    ] as const)
+  );
+  const allowanceByUserId = new Map(allowanceEntries);
+
+  const csvRows = await Promise.all(users.map(async (user) => {
+    const userRequests = requestsByUserId.get(user.id) ?? [];
+    let monthHours = 0;
+    let yearHours = 0;
+    const terms: string[] = [];
+
+    for (const request of userRequests) {
+      yearHours += computeLeaveHoursWithinRange(
+        request,
+        yearStart,
+        endDate,
+        holidayDates,
+        user.workingHoursPerDay
+      );
+
+      const monthOverlap = getDateOverlap(request.startDate, request.endDate, startDate, endDate);
+      if (!monthOverlap) {
+        continue;
+      }
+
+      monthHours += computeLeaveHoursWithinRange(
+        request,
+        startDate,
+        endDate,
+        holidayDates,
+        user.workingHoursPerDay
+      );
+      terms.push(formatLeaveTerm(monthOverlap.startDate, monthOverlap.endDate));
+    }
+
+    const allowanceHours = allowanceByUserId.get(user.id) ?? 0;
+    const workingDayHours = user.workingHoursPerDay || HOURS_PER_WORKDAY;
+
+    return {
+      meno: user.name,
+      oddelenie: user.teamName ?? "Bez oddelenia",
+      narok: formatExportNumber(allowanceHours / workingDayHours),
+      cerpane_mesiac: formatExportNumber(monthHours / workingDayHours),
+      cerpane_rok: formatExportNumber(yearHours / workingDayHours),
+      terminy: terms.join("; "),
+    };
+  }));
+
+  const csvHeader = ["meno", "oddelenie", "narok", "cerpane_mesiac", "cerpane_rok", "terminy"];
+  const csvContent = [
+    csvHeader.join(","),
+    ...csvRows.map((row) => [
+      escapeCsvValue(row.meno),
+      escapeCsvValue(row.oddelenie),
+      row.narok,
+      row.cerpane_mesiac,
+      row.cerpane_rok,
+      escapeCsvValue(row.terminy),
+    ].join(",")),
+  ].join("\n");
+
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "cellqos-monthly-export-"));
+  const inputPath = path.join(tempDir, `monthly-leave-${year}-${pad2(month)}.csv`);
+  const outputFilename = `Export_dovoleniek_${pad2(month)}_${year}.pdf`;
+  const outputPath = path.join(tempDir, outputFilename);
+  const scriptPath = path.join(exportAssetsDir, "generate_export.py");
+  const logoPath = path.join(exportAssetsDir, "output-onlinepngtools.png");
+  const pythonBin = process.env.PYTHON_BIN || "python";
+
+  try {
+    await fs.promises.writeFile(inputPath, `${csvContent}\n`, "utf-8");
+    await execFileAsync(
+      pythonBin,
+      [
+        scriptPath,
+        "--input",
+        inputPath,
+        "--output",
+        outputPath,
+        "--month",
+        String(month),
+        "--year",
+        String(year),
+        "--export-seq",
+        String(exportSequence),
+        "--logo",
+        logoPath,
+      ],
+      {
+        cwd: projectRootDir,
+        maxBuffer: 10 * 1024 * 1024,
+      }
+    );
+    const pdfBuffer = await fs.promises.readFile(outputPath);
+    return {
+      content: pdfBuffer,
+      contentType: "application/pdf",
+      filename: outputFilename,
+      month,
+      year,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown export error";
+    throw new HttpError(500, `Monthly leave export generation failed: ${message}`);
+  } finally {
+    await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 function parseBooleanFlag(value: unknown): boolean {
@@ -4452,13 +4767,21 @@ app.post("/stats/exports", asyncHandler(async (req, res) => {
   const filters = payload.filters ?? {};
   const memberIds = filters.memberIds ?? [];
   const allowedFormats: StatsExportFormat[] = ["PDF", "XLSX", "CSV"];
-  const allowedReportTypes: StatsReportType[] = ["DASHBOARD_SUMMARY", "TABLE_DETAIL", "YEAR_CALENDAR"];
+  const allowedReportTypes: StatsReportType[] = [
+    "DASHBOARD_SUMMARY",
+    "TABLE_DETAIL",
+    "YEAR_CALENDAR",
+    "MONTHLY_LEAVE_REPORT",
+  ];
 
   if (!allowedFormats.includes(format)) {
     throw new HttpError(400, "Unsupported export format");
   }
   if (!allowedReportTypes.includes(reportType)) {
     throw new HttpError(400, "Unsupported report type");
+  }
+  if (reportType === "MONTHLY_LEAVE_REPORT" && format !== "PDF") {
+    throw new HttpError(400, "Monthly leave report supports PDF only");
   }
 
   if (filters.eventTypes && filters.eventTypes.length > 0) {
@@ -4473,7 +4796,7 @@ app.post("/stats/exports", asyncHandler(async (req, res) => {
   const id = randomUUID();
   const createdAt = new Date().toISOString();
   const downloadUrl = `/stats/exports/${id}/download`;
-  const job: StatsExportJob & { content?: string | null } = {
+  const job: StoredStatsExportJob = {
     id,
     createdAt,
     createdBy: auth.userID,
@@ -4491,10 +4814,28 @@ app.post("/stats/exports", asyncHandler(async (req, res) => {
     downloadUrl,
   };
 
-  if (format === "CSV") {
+  if (reportType === "MONTHLY_LEAVE_REPORT") {
+    const monthlyPeriod = getMonthlyLeaveExportPeriod(filters);
+    const matchingExports = Array.from(statsExportJobs.values()).filter((existingJob) =>
+      existingJob.createdBy === auth.userID
+      && existingJob.reportType === "MONTHLY_LEAVE_REPORT"
+      && existingJob.filters.year === monthlyPeriod.year
+      && existingJob.filters.month === monthlyPeriod.month
+    );
+    const generated = await generateMonthlyLeaveReportExport(auth, filters, matchingExports.length + 1);
+    job.binaryContent = generated.content;
+    job.contentType = generated.contentType;
+    job.filename = generated.filename;
+    job.filters.year = generated.year;
+    job.filters.month = generated.month;
+  } else if (format === "CSV") {
     job.content = "id,status\nsample,ready\n";
+    job.contentType = "text/csv; charset=utf-8";
+    job.filename = `stats-export-${job.id}.csv`;
   } else {
     job.content = "Export ready.";
+    job.contentType = "text/plain; charset=utf-8";
+    job.filename = `stats-export-${job.id}.${job.format.toLowerCase()}`;
   }
 
   statsExportJobs.set(id, job);
@@ -4530,11 +4871,13 @@ app.get("/stats/exports/:id/download", asyncHandler(async (req, res) => {
     throw new HttpError(409, "Export not ready");
   }
 
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename=stats-export-${job.id}.${job.format.toLowerCase()}`
-  );
-  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  const filename = job.filename ?? `stats-export-${job.id}.${job.format.toLowerCase()}`;
+  res.setHeader("Content-Disposition", `attachment; filename=${filename}`);
+  res.setHeader("Content-Type", job.contentType ?? "text/plain; charset=utf-8");
+  if (job.binaryContent) {
+    res.send(job.binaryContent);
+    return;
+  }
   res.send(job.content ?? "Export ready.");
 }));
 
@@ -4662,6 +5005,34 @@ app.post("/notifications/read-all", asyncHandler(async (req, res) => {
       [auth.userID]
     );
   }
+  res.json({ ok: true });
+}));
+
+app.delete("/notifications/:id", asyncHandler(async (req, res) => {
+  const auth = requireAuth(req.auth ?? null);
+  const id = Number(req.params.id);
+
+  if (isAdmin(auth.role)) {
+    await pool.query("DELETE FROM notifications WHERE id = $1", [id]);
+  } else {
+    await pool.query(
+      "DELETE FROM notifications WHERE id = $1 AND user_id = $2",
+      [id, auth.userID]
+    );
+  }
+
+  res.json({ ok: true });
+}));
+
+app.delete("/notifications", asyncHandler(async (req, res) => {
+  const auth = requireAuth(req.auth ?? null);
+
+  if (isAdmin(auth.role)) {
+    await pool.query("DELETE FROM notifications");
+  } else {
+    await pool.query("DELETE FROM notifications WHERE user_id = $1", [auth.userID]);
+  }
+
   res.json({ ok: true });
 }));
 

@@ -122,7 +122,11 @@ export interface VacationPolicy {
 
 export type StatsExportStatus = "PENDING" | "READY" | "FAILED";
 export type StatsExportFormat = "PDF" | "XLSX" | "CSV";
-export type StatsReportType = "DASHBOARD_SUMMARY" | "TABLE_DETAIL" | "YEAR_CALENDAR";
+export type StatsReportType =
+  | "DASHBOARD_SUMMARY"
+  | "TABLE_DETAIL"
+  | "YEAR_CALENDAR"
+  | "MONTHLY_LEAVE_REPORT";
 
 export interface StatsKpiSummary {
   totalEvents: number;
