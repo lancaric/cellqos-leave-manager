@@ -20,6 +20,11 @@ declare module "nodemailer" {
       to?: string;
       subject?: string;
       text?: string;
+      attachments?: Array<{
+        filename?: string;
+        content?: string | Buffer;
+        contentType?: string;
+      }>;
     }
 
     interface Transporter {

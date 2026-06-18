@@ -16,6 +16,11 @@ interface EmailPayload {
   to: string;
   subject: string;
   text: string;
+  attachments?: Array<{
+    filename: string;
+    content: Buffer | string;
+    contentType?: string;
+  }>;
 }
 
 let cachedTransporter: nodemailer.Transporter | null = null;
@@ -123,6 +128,7 @@ export async function sendNotificationEmail(payload: EmailPayload): Promise<bool
       to: payload.to,
       subject: payload.subject,
       text: payload.text,
+      attachments: payload.attachments,
     });
     return true;
   } catch (error) {

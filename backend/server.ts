@@ -113,6 +113,56 @@ function pad2(value: number) {
   return String(value).padStart(2, "0");
 }
 
+function getLocalDateParts(date = new Date(), timeZone = scheduledEmailTimeZone): LocalDateParts {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = formatter.formatToParts(date);
+  const year = Number(parts.find((part) => part.type === "year")?.value);
+  const month = Number(parts.find((part) => part.type === "month")?.value);
+  const day = Number(parts.find((part) => part.type === "day")?.value);
+
+  return {
+    year,
+    month,
+    day,
+    isoDate: `${year}-${pad2(month)}-${pad2(day)}`,
+  };
+}
+
+function getDaysInMonth(year: number, month: number) {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function getMonthName(month: number) {
+  return [
+    "január",
+    "február",
+    "marec",
+    "apríl",
+    "máj",
+    "jún",
+    "júl",
+    "august",
+    "september",
+    "október",
+    "november",
+    "december",
+  ][month - 1] ?? `mesiac ${month}`;
+}
+
+function buildLocalDateParts(year: number, month: number, day: number): LocalDateParts {
+  return {
+    year,
+    month,
+    day,
+    isoDate: `${year}-${pad2(month)}-${pad2(day)}`,
+  };
+}
+
 function clampBirthdayDay(year: number, month: number, day: number) {
   // Handle Feb 29 birthdays on non-leap years. Use Feb 28 to keep it simple/predictable.
   if (month === 2 && day === 29 && !isLeapYear(year)) {
@@ -696,6 +746,18 @@ type StoredStatsExportJob = StatsExportJob & {
 
 const columnSupportCache = new Map<string, boolean>();
 const statsExportJobs = new Map<string, StoredStatsExportJob>();
+const scheduledEmailTimeZone = process.env.APP_TIMEZONE?.trim() || "Europe/Bratislava";
+
+type ScheduledEmailDispatchType = "MONTHLY_REPORT" | "MONTHLY_REMINDER";
+
+type LocalDateParts = {
+  year: number;
+  month: number;
+  day: number;
+  isoDate: string;
+};
+
+let scheduledEmailTickInProgress = false;
 
 async function columnExists(table: string, column: string): Promise<boolean> {
   const cacheKey = `${table}.${column}`;
@@ -1135,25 +1197,13 @@ function formatLeaveTerm(startDate: string, endDate: string) {
   return `${formatReportDateShort(startDate)} - ${formatReportDate(endDate)}`;
 }
 
-async function generateMonthlyLeaveReportExport(
-  auth: AuthUser,
-  filters: {
-    year?: number;
-    month?: number;
-    quarter?: number;
-    teamId?: number;
-    memberIds?: string[];
-    eventTypes?: LeaveType[];
-  },
+async function buildMonthlyLeaveReportExport(
+  userIds: string[],
+  month: number,
+  year: number,
   exportSequence: number
 ): Promise<{ content: Buffer; contentType: string; filename: string; month: number; year: number }> {
-  const { month, year, startDate, endDate } = getMonthlyLeaveExportPeriod(filters);
-  const scope = await resolveStatsScope(auth, filters.teamId ?? null, filters.memberIds ?? []);
-
-  if (scope.members.length === 0) {
-    throw new HttpError(400, "No active members available for the monthly leave export");
-  }
-
+  const { startDate, endDate } = getMonthDateRange(year, month);
   const yearStart = `${year}-01-01`;
   const users = await queryRows<{
     id: string;
@@ -1170,9 +1220,10 @@ async function generateMonthlyLeaveReportExport(
       FROM users u
       LEFT JOIN teams t ON t.id = u.team_id
       WHERE u.id = ANY($1::text[])
+        AND u.is_active = true
       ORDER BY u.name ASC
     `,
-    [scope.members.map((member) => member.id), HOURS_PER_WORKDAY]
+    [userIds, HOURS_PER_WORKDAY]
   );
 
   if (users.length === 0) {
@@ -1333,6 +1384,278 @@ async function generateMonthlyLeaveReportExport(
   } finally {
     await fs.promises.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+async function generateMonthlyLeaveReportExport(
+  auth: AuthUser,
+  filters: {
+    year?: number;
+    month?: number;
+    quarter?: number;
+    teamId?: number;
+    memberIds?: string[];
+    eventTypes?: LeaveType[];
+  },
+  exportSequence: number
+): Promise<{ content: Buffer; contentType: string; filename: string; month: number; year: number }> {
+  const { month, year } = getMonthlyLeaveExportPeriod(filters);
+  const scope = await resolveStatsScope(auth, filters.teamId ?? null, filters.memberIds ?? []);
+
+  if (scope.members.length === 0) {
+    throw new HttpError(400, "No active members available for the monthly leave export");
+  }
+
+  return buildMonthlyLeaveReportExport(
+    scope.members.map((member) => member.id),
+    month,
+    year,
+    exportSequence
+  );
+}
+
+function getMonthlyReportRecipientsFromEnv(): string[] {
+  const raw = process.env.MONTHLY_REPORT_RECIPIENTS?.trim();
+  if (!raw) {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      raw
+        .split(/[;,]/)
+        .map((email) => email.trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+async function listEmailRecipients(options: {
+  roles?: UserRole[];
+} = {}): Promise<string[]> {
+  const supportsEmailNotifications = await columnExists("users", "email_notifications_enabled");
+  const conditions = [
+    "is_active = true",
+    "email IS NOT NULL",
+    "btrim(email) <> ''",
+    `${supportsEmailNotifications ? "email_notifications_enabled = true" : "TRUE"}`,
+  ];
+  const values: any[] = [];
+
+  if (options.roles && options.roles.length > 0) {
+    conditions.push(`role = ANY($${values.length + 1}::user_role[])`);
+    values.push(options.roles);
+  }
+
+  const rows = await queryRows<{ email: string }>(
+    `
+      SELECT DISTINCT email
+      FROM users
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY email ASC
+    `,
+    values
+  );
+
+  return rows.map((row) => row.email.trim()).filter(Boolean);
+}
+
+async function claimScheduledEmailDispatch(type: ScheduledEmailDispatchType, isoDate: string): Promise<boolean> {
+  const inserted = await queryRow<{ eventType: string }>(
+    `
+      INSERT INTO scheduled_email_dispatches (event_type, dispatch_date, status)
+      VALUES ($1, $2, 'PROCESSING')
+      ON CONFLICT (event_type, dispatch_date) DO NOTHING
+      RETURNING event_type as "eventType"
+    `,
+    [type, isoDate]
+  );
+
+  if (inserted) {
+    return true;
+  }
+
+  const reclaimed = await queryRow<{ eventType: string }>(
+    `
+      UPDATE scheduled_email_dispatches
+      SET status = 'PROCESSING',
+          updated_at = NOW()
+      WHERE event_type = $1
+        AND dispatch_date = $2
+        AND status = 'PROCESSING'
+        AND updated_at < NOW() - INTERVAL '2 hours'
+      RETURNING event_type as "eventType"
+    `,
+    [type, isoDate]
+  );
+
+  return Boolean(reclaimed);
+}
+
+async function completeScheduledEmailDispatch(type: ScheduledEmailDispatchType, isoDate: string): Promise<void> {
+  await pool.query(
+    `
+      UPDATE scheduled_email_dispatches
+      SET status = 'SENT',
+          updated_at = NOW()
+      WHERE event_type = $1
+        AND dispatch_date = $2
+    `,
+    [type, isoDate]
+  );
+}
+
+async function releaseScheduledEmailDispatch(type: ScheduledEmailDispatchType, isoDate: string): Promise<void> {
+  await pool.query(
+    `
+      DELETE FROM scheduled_email_dispatches
+      WHERE event_type = $1
+        AND dispatch_date = $2
+        AND status = 'PROCESSING'
+    `,
+    [type, isoDate]
+  );
+}
+
+async function sendMonthlyReminderEmail(dateParts: LocalDateParts): Promise<boolean> {
+  const recipients = await listEmailRecipients();
+  if (recipients.length === 0) {
+    console.warn("Monthly reminder email skipped: no eligible recipients");
+    return false;
+  }
+
+  const nextMonthDate = new Date(Date.UTC(dateParts.year, dateParts.month, 1));
+  const nextMonthName = getMonthName(nextMonthDate.getUTCMonth() + 1);
+  const nextMonthYear = nextMonthDate.getUTCFullYear();
+  const sent = await sendNotificationEmail({
+    to: recipients.join(", "),
+    subject: "Pripomienka: doplnte si dovolenky pred koncom mesiaca",
+    text: [
+      "Ahojte,",
+      "",
+      "zajtra je posledny den v mesiaci.",
+      "Skontrolujte si prosim, ci mate v systeme dovolenky.cellqos.com doplnene vsetky dovolenky, ktore ste si este nezapisali.",
+      "",
+      `Nasledujuci mesiac: ${nextMonthName} ${nextMonthYear}`,
+      "",
+      "Dakujeme.",
+    ].join("\n"),
+  });
+
+  if (!sent) {
+    console.warn("Monthly reminder email send failed");
+  }
+
+  return sent;
+}
+
+async function sendMonthlyReportEmail(dateParts: LocalDateParts): Promise<boolean> {
+  const envRecipients = getMonthlyReportRecipientsFromEnv();
+  const recipients = envRecipients.length > 0
+    ? envRecipients
+    : await listEmailRecipients({ roles: ["ADMIN", "MANAGER"] });
+
+  if (recipients.length === 0) {
+    console.warn("Monthly report email skipped: no recipients configured");
+    return false;
+  }
+
+  const report = await buildMonthlyLeaveReportExport(
+    (await queryRows<{ id: string }>(
+      `
+        SELECT id
+        FROM users
+        WHERE is_active = true
+        ORDER BY name ASC
+      `
+    )).map((row) => row.id),
+    dateParts.month,
+    dateParts.year,
+    1
+  );
+
+  const sent = await sendNotificationEmail({
+    to: recipients.join(", "),
+    subject: `Mesacny report dovoleniek za ${getMonthName(dateParts.month)} ${dateParts.year}`,
+    text: [
+      "V prilohe posielam mesacny report dovoleniek.",
+      "",
+      `Obdobie reportu: ${getMonthName(dateParts.month)} ${dateParts.year}`,
+      `Datum odoslania: ${dateParts.isoDate}`,
+    ].join("\n"),
+    attachments: [
+      {
+        filename: report.filename,
+        content: report.content,
+        contentType: report.contentType,
+      },
+    ],
+  });
+
+  if (!sent) {
+    console.warn("Monthly report email send failed");
+  }
+
+  return sent;
+}
+
+async function runScheduledEmailTick(): Promise<void> {
+  if (scheduledEmailTickInProgress) {
+    return;
+  }
+
+  scheduledEmailTickInProgress = true;
+  try {
+    const dateParts = getLocalDateParts();
+    const daysInMonth = getDaysInMonth(dateParts.year, dateParts.month);
+
+    if (dateParts.day === daysInMonth - 1) {
+      const claimed = await claimScheduledEmailDispatch("MONTHLY_REMINDER", dateParts.isoDate);
+      if (claimed) {
+        try {
+          const sent = await sendMonthlyReminderEmail(dateParts);
+          if (sent) {
+            await completeScheduledEmailDispatch("MONTHLY_REMINDER", dateParts.isoDate);
+          } else {
+            await releaseScheduledEmailDispatch("MONTHLY_REMINDER", dateParts.isoDate);
+          }
+        } catch (error) {
+          await releaseScheduledEmailDispatch("MONTHLY_REMINDER", dateParts.isoDate);
+          throw error;
+        }
+      }
+    }
+
+    if (dateParts.day === daysInMonth) {
+      const claimed = await claimScheduledEmailDispatch("MONTHLY_REPORT", dateParts.isoDate);
+      if (claimed) {
+        try {
+          const sent = await sendMonthlyReportEmail(dateParts);
+          if (sent) {
+            await completeScheduledEmailDispatch("MONTHLY_REPORT", dateParts.isoDate);
+          } else {
+            await releaseScheduledEmailDispatch("MONTHLY_REPORT", dateParts.isoDate);
+          }
+        } catch (error) {
+          await releaseScheduledEmailDispatch("MONTHLY_REPORT", dateParts.isoDate);
+          throw error;
+        }
+      }
+    }
+  } finally {
+    scheduledEmailTickInProgress = false;
+  }
+}
+
+function startScheduledEmailLoop(): void {
+  void runScheduledEmailTick().catch((error) => {
+    console.error("Initial scheduled email tick failed", error);
+  });
+
+  setInterval(() => {
+    void runScheduledEmailTick().catch((error) => {
+      console.error("Scheduled email tick failed", error);
+    });
+  }, 60 * 60 * 1000);
 }
 
 function parseBooleanFlag(value: unknown): boolean {
@@ -5099,6 +5422,98 @@ app.patch("/admin/vacation-policy", asyncHandler(async (req, res) => {
   res.json({ policy: updated });
 }));
 
+app.post("/admin/test/scheduled-email", asyncHandler(async (req, res) => {
+  const auth = requireAuth(req.auth ?? null);
+  requireAdmin(auth.role);
+
+  const payload = req.body as {
+    type?: ScheduledEmailDispatchType;
+    year?: number;
+    month?: number;
+    day?: number;
+    dryRun?: boolean;
+  };
+
+  if (payload.type !== "MONTHLY_REMINDER" && payload.type !== "MONTHLY_REPORT") {
+    throw new HttpError(400, "type must be MONTHLY_REMINDER or MONTHLY_REPORT");
+  }
+
+  const current = getLocalDateParts();
+  const year = payload.year ?? current.year;
+  const month = payload.month ?? current.month;
+  const day = payload.day ?? current.day;
+
+  if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+    throw new HttpError(400, "Invalid year");
+  }
+  if (!Number.isInteger(month) || month < 1 || month > 12) {
+    throw new HttpError(400, "Invalid month");
+  }
+  if (!Number.isInteger(day) || day < 1 || day > 31) {
+    throw new HttpError(400, "Invalid day");
+  }
+
+  const dateParts = buildLocalDateParts(year, month, day);
+  if (payload.dryRun) {
+    if (payload.type === "MONTHLY_REMINDER") {
+      const recipients = await listEmailRecipients();
+      res.json({
+        ok: true,
+        dryRun: true,
+        type: payload.type,
+        date: dateParts.isoDate,
+        month: dateParts.month,
+        year: dateParts.year,
+        recipientCount: recipients.length,
+        recipients,
+      });
+      return;
+    }
+
+    const envRecipients = getMonthlyReportRecipientsFromEnv();
+    const recipients = envRecipients.length > 0
+      ? envRecipients
+      : await listEmailRecipients({ roles: ["ADMIN", "MANAGER"] });
+    const userIds = (await queryRows<{ id: string }>(
+      `
+        SELECT id
+        FROM users
+        WHERE is_active = true
+        ORDER BY name ASC
+      `
+    )).map((row) => row.id);
+    const report = await buildMonthlyLeaveReportExport(userIds, dateParts.month, dateParts.year, 1);
+
+    res.json({
+      ok: true,
+      dryRun: true,
+      type: payload.type,
+      date: dateParts.isoDate,
+      month: dateParts.month,
+      year: dateParts.year,
+      recipientCount: recipients.length,
+      recipients,
+      filename: report.filename,
+      contentType: report.contentType,
+      contentBytes: report.content.length,
+    });
+    return;
+  }
+
+  const sent = payload.type === "MONTHLY_REMINDER"
+    ? await sendMonthlyReminderEmail(dateParts)
+    : await sendMonthlyReportEmail(dateParts);
+
+  res.json({
+    ok: true,
+    sent,
+    type: payload.type,
+    date: dateParts.isoDate,
+    month: dateParts.month,
+    year: dateParts.year,
+  });
+}));
+
 app.get("/admin/database/export", asyncHandler(async (req, res) => {
   const auth = requireAuth(req.auth ?? null);
   requireAdmin(auth.role);
@@ -5263,6 +5678,21 @@ async function startServer() {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_holidays_active ON holidays(is_active)
   `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS scheduled_email_dispatches (
+      event_type TEXT NOT NULL,
+      dispatch_date DATE NOT NULL,
+      status TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (event_type, dispatch_date)
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_scheduled_email_dispatches_status
+    ON scheduled_email_dispatches(status, updated_at)
+  `);
+  startScheduledEmailLoop();
   app.listen(port, () => {
     // eslint-disable-next-line no-console
     console.log(`API server listening on http://localhost:${port}`);

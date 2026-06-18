@@ -246,7 +246,7 @@ def build_pdf(rows: list[dict[str, object]], output_path: Path, logo_path: str |
     company_block = [
         Paragraph(company["name"], style_company),
         Paragraph(company["address"], style_company_sub),
-        Paragraph(f"ICO: {company.get('ico', '')} · DIC: {company.get('dic', '')}", style_company_sub),
+        Paragraph(f"IČO: {company.get('ico', '')} · DIČ: {company.get('dic', '')}", style_company_sub),
     ]
     left_header = Table([[logo_cell, company_block]], colWidths=[2.9 * cm, 7.4 * cm])
     left_header.setStyle(
@@ -309,7 +309,7 @@ def build_pdf(rows: list[dict[str, object]], output_path: Path, logo_path: str |
     story.append(Paragraph("Prehľad čerpania dovolenky podľa zamestnancov", style_section))
 
     headers = [
-        Paragraph("C.", style_th),
+        Paragraph("Č.", style_th),
         Paragraph("Meno a priezvisko", style_th_left),
         Paragraph("Oddelenie", style_th_left),
         Paragraph("Nárok<br/>(dni/rok)", style_th),
@@ -394,11 +394,11 @@ def build_pdf(rows: list[dict[str, object]], output_path: Path, logo_path: str |
             Paragraph(role, style_sig_label),
             Spacer(1, 10),
             Paragraph("Meno a priezvisko: " + "." * 32, style_sig_line),
-            Paragraph("Datum: " + "." * 40, style_sig_line),
+            Paragraph("Dátum: " + "." * 40, style_sig_line),
             Paragraph("Podpis: " + "." * 40, style_sig_line),
         ]
 
-    sig_table = Table([[sign_block("Spracoval"), sign_block("Schválil")]], colWidths=[CONTENT_W / 2, CONTENT_W / 2])
+    sig_table = Table([[sign_block("Schválil")]], colWidths=[CONTENT_W])
     sig_table.setStyle(
         TableStyle(
             [
@@ -423,7 +423,7 @@ def build_pdf(rows: list[dict[str, object]], output_path: Path, logo_path: str |
         canvas.drawString(
             L_MARGIN,
             B_MARGIN - 0.95 * cm,
-            f"Vygenerovane automaticky · Dovolenkovy system · {company['name']}",
+            f"Vygenerované automaticky · Dovolenkový systém · {company['name']}",
         )
         canvas.drawRightString(PAGE_W - R_MARGIN, B_MARGIN - 0.95 * cm, f"Strana {doc.page}")
         canvas.restoreState()
