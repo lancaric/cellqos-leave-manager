@@ -14,6 +14,8 @@ export type LeaveStatus =
   | "REJECTED" 
   | "CANCELLED";
 
+export type LeaveRequestKind = "STANDARD" | "CHANGE" | "CANCELLATION";
+
 export type VacationAccrualPolicy =
   | "YEAR_START"
   | "PRO_RATA";
@@ -45,6 +47,7 @@ export interface Team {
   id: number;
   name: string;
   maxConcurrentLeaves: number | null;
+  visibleToTeamIds?: number[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -53,6 +56,15 @@ export interface LeaveRequest {
   id: number;
   userId: string;
   userName?: string | null;
+  sourceRequestId?: number | null;
+  requestKind?: LeaveRequestKind;
+  sourceType?: LeaveType | null;
+  sourceStatus?: LeaveStatus | null;
+  sourceStartDate?: string | null;
+  sourceEndDate?: string | null;
+  sourceStartTime?: string | null;
+  sourceEndTime?: string | null;
+  sourceComputedHours?: number | null;
   type: LeaveType;
   startDate: string;
   endDate: string;

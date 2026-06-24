@@ -7,6 +7,7 @@ import { formatRequestDateTime } from "@/lib/requestDateTime";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/use-toast";
 import { Calendar, Clock } from "lucide-react";
 import RequestFormDialog from "./RequestFormDialog";
@@ -34,12 +35,47 @@ export default function RequestDetailDialog({ request, open, onClose }: RequestD
   const isManager = user?.role === "MANAGER" || user?.role === "ADMIN";
   const { toast } = useToast();
   const [showEditDialog, setShowEditDialog] = useState(false);
+  const [approvalComment, setApprovalComment] = useState("");
   const startDateLabel = formatRequestDateTime(request.startDate, request.startTime);
   const endDateLabel = formatRequestDateTime(request.endDate, request.endTime);
+  const sourceStartDateLabel = formatRequestDateTime(request.sourceStartDate, request.sourceStartTime);
+  const sourceEndDateLabel = formatRequestDateTime(request.sourceEndDate, request.sourceEndTime);
   const startTimeLabel = request.startTime ? request.startTime.slice(0, 5) : null;
   const endTimeLabel = request.endTime ? request.endTime.slice(0, 5) : null;
   const timeRangeLabel =
     startTimeLabel && endTimeLabel ? `${startTimeLabel} - ${endTimeLabel}` : startTimeLabel || endTimeLabel;
+  const sourceStartTimeLabel = request.sourceStartTime ? request.sourceStartTime.slice(0, 5) : null;
+  const sourceEndTimeLabel = request.sourceEndTime ? request.sourceEndTime.slice(0, 5) : null;
+  const sourceTimeRangeLabel =
+    sourceStartTimeLabel && sourceEndTimeLabel
+      ? `${sourceStartTimeLabel} - ${sourceEndTimeLabel}`
+      : sourceStartTimeLabel || sourceEndTimeLabel;
+
+  const meQuery = useQuery({
+    queryKey: ["me"],
+    enabled: open && Boolean(user),
+    queryFn: async () => backend.users.me(),
+  });
+
+  const managedTeamIds = ((meQuery.data?.managedTeamIds as number[] | undefined) ?? []).map((value) => Number(value));
+  const requestTeamId = request.teamId !== undefined && request.teamId !== null ? Number(request.teamId) : null;
+  const isOwnRequest = request.userId === user?.id;
+  const canManageOtherUsersRequest =
+    user?.role === "ADMIN"
+      || (user?.role === "MANAGER" && requestTeamId !== null && managedTeamIds.includes(requestTeamId));
+  const canManageRequest = Boolean(
+    user?.role === "ADMIN"
+      || (user?.role === "EMPLOYEE" && isOwnRequest)
+      || (user?.role === "MANAGER" && !isOwnRequest && canManageOtherUsersRequest)
+  );
+  const canApproveRequest = Boolean(
+    request.status === "PENDING" && !isOwnRequest && canManageOtherUsersRequest
+  );
+  const requestKind = request.requestKind ?? "STANDARD";
+  const isApprovedOwnRequest = isOwnRequest && request.status === "APPROVED";
+  const isPendingDerivedRequest = request.status === "PENDING" && Boolean(request.sourceRequestId);
+  const canRequestApprovedLeaveChange = Boolean(!isManager && isApprovedOwnRequest);
+  const canRequestApprovedLeaveCancellation = Boolean(!isManager && isApprovedOwnRequest);
 
   const invalidateData = async () => {
     await Promise.all([
@@ -69,7 +105,9 @@ export default function RequestDetailDialog({ request, open, onClose }: RequestD
     mutationFn: async () => backend.leave_requests.cancel({ id: request.id }),
     onSuccess: async () => {
       await invalidateData();
-      toast({ title: "Ziadost bola zrusena" });
+      toast({
+        title: isApprovedOwnRequest ? "Žiadosť o zrušenie bola odoslaná na schválenie" : "Žiadosť bola zrušená",
+      });
       onClose();
     },
     onError: (error: any) => {
@@ -88,6 +126,39 @@ export default function RequestDetailDialog({ request, open, onClose }: RequestD
     onError: (error: any) => {
       console.error("Failed to delete request:", error);
       toast({ title: "Odstranenie ziadosti zlyhalo", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const approveMutation = useMutation({
+    mutationFn: async () => backend.leave_requests.approve({ id: request.id, comment: approvalComment || undefined }),
+    onSuccess: async () => {
+      await invalidateData();
+      toast({ title: "Ziadost bola schvalena" });
+      setApprovalComment("");
+      onClose();
+    },
+    onError: (error: any) => {
+      console.error("Failed to approve request:", error);
+      toast({ title: "Schvalenie ziadosti zlyhalo", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const rejectMutation = useMutation({
+    mutationFn: async () => {
+      if (!approvalComment.trim()) {
+        throw new Error("Komentar je povinny pri zamietnuti");
+      }
+      return backend.leave_requests.reject({ id: request.id, comment: approvalComment.trim() });
+    },
+    onSuccess: async () => {
+      await invalidateData();
+      toast({ title: "Ziadost bola zamietnuta" });
+      setApprovalComment("");
+      onClose();
+    },
+    onError: (error: any) => {
+      console.error("Failed to reject request:", error);
+      toast({ title: "Zamietnutie ziadosti zlyhalo", description: error.message, variant: "destructive" });
     },
   });
 
@@ -117,6 +188,9 @@ export default function RequestDetailDialog({ request, open, onClose }: RequestD
     DELETE: "Odstranena",
     BULK_APPROVE: "Hromadne schvalenie",
     BULK_REJECT: "Hromadne zamietnutie",
+    CHANGE_REQUEST_CREATE: "Požiadavka na úpravu",
+    CANCELLATION_REQUEST_CREATE: "Požiadavka na zrušenie",
+    CANCELLATION_REQUEST_APPROVED: "Zrušenie schválené",
   };
 
   const canViewHistory = Boolean(user?.role === "MANAGER" || user?.role === "ADMIN" || request.userId === user?.id);
@@ -168,6 +242,11 @@ export default function RequestDetailDialog({ request, open, onClose }: RequestD
     OTHER: "Ine",
   };
 
+  const requestKindLabels = {
+    CHANGE: "Úprava schválenej dovolenky",
+    CANCELLATION: "Zrušenie schválenej dovolenky",
+  };
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -179,7 +258,14 @@ export default function RequestDetailDialog({ request, open, onClose }: RequestD
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
               <div className="text-sm text-muted-foreground">Typ</div>
-              <div className="font-medium">{typeLabels[request.type as keyof typeof typeLabels]}</div>
+              <div className="flex flex-wrap items-center gap-2 font-medium">
+                <span>{typeLabels[request.type as keyof typeof typeLabels]}</span>
+                {requestKind !== "STANDARD" && (
+                  <Badge variant="outline">
+                    {requestKindLabels[requestKind as keyof typeof requestKindLabels] ?? requestKind}
+                  </Badge>
+                )}
+              </div>
             </div>
             <Badge className={`${statusColors[request.status as keyof typeof statusColors]} px-3 py-1 text-xs shrink-0`}>
               {statusLabels[request.status as keyof typeof statusLabels] ?? request.status}
@@ -221,6 +307,54 @@ export default function RequestDetailDialog({ request, open, onClose }: RequestD
             </div>
           </div>
 
+          {requestKind === "CHANGE" && request.sourceRequestId && request.sourceStartDate && (
+            <div className="grid gap-4 rounded-md border p-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <div className="text-sm font-medium">Povodna schvalena dovolenka</div>
+                <div className="text-sm text-muted-foreground">
+                  {sourceStartDateLabel} - {sourceEndDateLabel}
+                </div>
+                {sourceTimeRangeLabel && (
+                  <div className="text-sm text-muted-foreground">Cas: {sourceTimeRangeLabel}</div>
+                )}
+                {request.sourceComputedHours !== null && request.sourceComputedHours !== undefined && (
+                  <div className="text-sm text-muted-foreground">
+                    Trvanie: {formatLeaveHours(request.sourceComputedHours)}
+                  </div>
+                )}
+              </div>
+              <div className="space-y-2">
+                <div className="text-sm font-medium">Nova poziadavka na schvalenie</div>
+                <div className="text-sm text-muted-foreground">
+                  {startDateLabel} - {endDateLabel}
+                </div>
+                {timeRangeLabel && (
+                  <div className="text-sm text-muted-foreground">Cas: {timeRangeLabel}</div>
+                )}
+                <div className="text-sm text-muted-foreground">
+                  Trvanie: {formatLeaveHours(request.computedHours)}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {requestKind === "CANCELLATION" && request.sourceRequestId && request.sourceStartDate && (
+            <div className="rounded-md border p-4">
+              <div className="text-sm font-medium">Dovolenka urcena na zrusenie</div>
+              <div className="mt-2 text-sm text-muted-foreground">
+                {sourceStartDateLabel} - {sourceEndDateLabel}
+              </div>
+              {sourceTimeRangeLabel && (
+                <div className="mt-1 text-sm text-muted-foreground">Cas: {sourceTimeRangeLabel}</div>
+              )}
+              {request.sourceComputedHours !== null && request.sourceComputedHours !== undefined && (
+                <div className="mt-1 text-sm text-muted-foreground">
+                  Trvanie: {formatLeaveHours(request.sourceComputedHours)}
+                </div>
+              )}
+            </div>
+          )}
+
           {request.reason && (
             <div>
               <div className="text-sm text-muted-foreground mb-1">Dovod</div>
@@ -232,6 +366,50 @@ export default function RequestDetailDialog({ request, open, onClose }: RequestD
             <div>
               <div className="text-sm text-muted-foreground mb-1">Komentar manazera</div>
               <div className="p-3 bg-muted rounded-md">{request.managerComment}</div>
+            </div>
+          )}
+
+          {(requestKind === "CHANGE" || requestKind === "CANCELLATION") && (
+            <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+              {requestKind === "CHANGE"
+                ? "Toto je požiadavka na úpravu už schválenej dovolenky. Po schválení nahradí pôvodnú dovolenku."
+                : "Toto je požiadavka na zrušenie už schválenej dovolenky. Po schválení sa pôvodná dovolenka zruší."}
+            </div>
+          )}
+
+          {canApproveRequest && (
+            <div className="space-y-3 rounded-md border p-4">
+              <div className="text-sm font-medium">Schvalenie ziadosti</div>
+              <Textarea
+                placeholder="Komentar pre schvalenie alebo zamietnutie (povinny pri zamietnuti)"
+                value={approvalComment}
+                onChange={(event) => setApprovalComment(event.target.value)}
+                rows={3}
+              />
+              <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                <Button
+                  size="sm"
+                  className="bg-green-600 hover:bg-green-700"
+                  onClick={() => approveMutation.mutate()}
+                  disabled={approveMutation.isPending || rejectMutation.isPending}
+                >
+                  Schvalit
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => rejectMutation.mutate()}
+                  disabled={approveMutation.isPending || rejectMutation.isPending || !approvalComment.trim()}
+                >
+                  Zamietnut
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {isManager && !canManageRequest && (
+            <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+              Tuto ziadost vidite, ale nemate pravo ju menit ani schvalovat. Na spravu mate len timy, ktore realne riadite.
             </div>
           )}
 
@@ -262,24 +440,31 @@ export default function RequestDetailDialog({ request, open, onClose }: RequestD
           )}
 
           <div className="flex flex-wrap justify-end gap-2">
-            {isManager && (
+            {(isManager || canRequestApprovedLeaveChange) && (
               <>
-                <Button size="sm" variant="outline" onClick={() => setShowEditDialog(true)}>
-                  Upravit
-                </Button>
                 <Button
                   size="sm"
-                  variant="destructive"
-                  onClick={() => {
-                    if (window.confirm("Naozaj chcete odstranit tuto ziadost?")) {
-                      deleteMutation.mutate();
-                    }
-                  }}
-                  disabled={deleteMutation.isPending}
+                  variant="outline"
+                  onClick={() => setShowEditDialog(true)}
+                  disabled={isManager ? !canManageRequest : false}
                 >
-                  Odstranit
+                  {canRequestApprovedLeaveChange ? "Požiadať o úpravu" : "Upraviť"}
                 </Button>
               </>
+            )}
+            {isManager && (
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => {
+                  if (window.confirm("Naozaj chcete odstranit tuto ziadost?")) {
+                    deleteMutation.mutate();
+                  }
+                }}
+                disabled={deleteMutation.isPending || !canManageRequest}
+              >
+                Odstranit
+              </Button>
             )}
             {request.status === "DRAFT" && (
               <Button size="sm" className="font-semibold" onClick={() => submitMutation.mutate()}>
@@ -288,7 +473,12 @@ export default function RequestDetailDialog({ request, open, onClose }: RequestD
             )}
             {(request.status === "DRAFT" || request.status === "PENDING") && (
               <Button size="sm" variant="destructive" onClick={() => cancelMutation.mutate()}>
-                Zrusit ziadost
+                {isPendingDerivedRequest ? "Stiahnuť požiadavku" : "Zrusit ziadost"}
+              </Button>
+            )}
+            {canRequestApprovedLeaveCancellation && (
+              <Button size="sm" variant="destructive" onClick={() => cancelMutation.mutate()}>
+                Požiadať o zrušenie
               </Button>
             )}
           </div>
@@ -300,7 +490,9 @@ export default function RequestDetailDialog({ request, open, onClose }: RequestD
           request={request}
           onClose={() => {
             setShowEditDialog(false);
-            onClose();
+            if (canRequestApprovedLeaveChange || isPendingDerivedRequest) {
+              onClose();
+            }
           }}
         />
       )}

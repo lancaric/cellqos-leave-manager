@@ -84,7 +84,7 @@ export function createApiClient(token: string | null) {
     },
     teams: {
       list: () => apiRequest<{ teams: any[] }>("/teams", { token }),
-      create: (data: { name: string; maxConcurrentLeaves?: number | null }) =>
+      create: (data: { name: string; maxConcurrentLeaves?: number | null; visibleToTeamIds?: number[] }) =>
         apiRequest<any>("/teams", { method: "POST", body: data, token }),
       update: (data: { id: number } & Record<string, unknown>) =>
         apiRequest<any>(`/teams/${data.id}`, { method: "PATCH", body: data, token }),

@@ -25,6 +25,7 @@ import { sendNotificationEmail } from "./shared/email";
 import { buildNotificationEmail } from "./shared/notification-email";
 import type {
   LeaveRequest,
+  LeaveRequestKind,
   LeaveStatus,
   LeaveType,
   Team,
@@ -217,6 +218,7 @@ async function queryRows<T extends QueryResultRow>(text: string, values: any[] =
 }
 
 let managerTeamsTableSupported: boolean | null = null;
+let teamVisibilityTableSupported: boolean | null = null;
 
 async function hasManagerTeamsTable(): Promise<boolean> {
   if (managerTeamsTableSupported !== null) {
@@ -267,20 +269,236 @@ async function hasManagerTeamsTable(): Promise<boolean> {
   return managerTeamsTableSupported;
 }
 
+async function hasTeamVisibilityTable(): Promise<boolean> {
+  if (teamVisibilityTableSupported !== null) {
+    return teamVisibilityTableSupported;
+  }
+
+  const result = await queryRow<{ exists: boolean }>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_name = 'team_visibility'
+      ) as "exists"
+    `
+  );
+
+  if (!result?.exists) {
+    await pool.query(
+      `
+        CREATE TABLE IF NOT EXISTS team_visibility (
+          team_id BIGINT NOT NULL,
+          visible_team_id BIGINT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (team_id, visible_team_id),
+          CONSTRAINT fk_team_visibility_team
+            FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
+          CONSTRAINT fk_team_visibility_visible_team
+            FOREIGN KEY (visible_team_id) REFERENCES teams(id) ON DELETE CASCADE,
+          CONSTRAINT chk_team_visibility_no_self
+            CHECK (team_id <> visible_team_id)
+        )
+      `
+    );
+    await pool.query(
+      "CREATE INDEX IF NOT EXISTS idx_team_visibility_visible_team_id ON team_visibility(visible_team_id)"
+    );
+  }
+
+  const afterCreate = await queryRow<{ exists: boolean }>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_name = 'team_visibility'
+      ) as "exists"
+    `
+  );
+
+  teamVisibilityTableSupported = Boolean(afterCreate?.exists);
+  return teamVisibilityTableSupported;
+}
+
 async function getManagedTeamIds(userId: string): Promise<number[]> {
   if (await hasManagerTeamsTable()) {
     const rows = await queryRows<{ teamId: number }>(
       "SELECT team_id as \"teamId\" FROM manager_teams WHERE manager_user_id = $1",
       [userId]
     );
-    return Array.from(new Set(rows.map((row) => Number(row.teamId))));
+    return Array.from(new Set(rows.map((row) => normalizeTeamId(row.teamId)).filter((id): id is number => id !== null)));
   }
 
   // Never infer managed teams from employee team assignment.
   return [];
 }
 
+async function getUserTeamId(userId: string): Promise<number | null> {
+  const row = await queryRow<{ teamId: number | null }>(
+    "SELECT team_id as \"teamId\" FROM users WHERE id = $1",
+    [userId]
+  );
+  return normalizeTeamId(row?.teamId);
+}
+
+function normalizeTeamId(value: unknown): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized)) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function mergeVisibleTeamIds(ownTeamId: number | string | null, managedTeamIds: Array<number | string>): number[] {
+  return Array.from(
+    new Set(
+      [ownTeamId, ...managedTeamIds]
+        .map((value) => normalizeTeamId(value))
+        .filter((value): value is number => value !== null)
+    )
+  );
+}
+
+function normalizeTeamIdList(values: Array<number | string | null | undefined>): number[] {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => normalizeTeamId(value))
+        .filter((value): value is number => value !== null)
+    )
+  );
+}
+
+async function getVisibleTeamIdsForTeam(teamId: number | null): Promise<number[]> {
+  if (teamId === null) {
+    return [];
+  }
+
+  if (!(await hasTeamVisibilityTable())) {
+    return [teamId];
+  }
+
+  const rows = await queryRows<{ teamId: number | string }>(
+    `
+      SELECT visible_team_id as "teamId"
+      FROM team_visibility
+      WHERE team_id = $1
+      UNION
+      SELECT team_id as "teamId"
+      FROM team_visibility
+      WHERE visible_team_id = $1
+    `,
+    [teamId]
+  );
+
+  return normalizeTeamIdList([teamId, ...rows.map((row) => row.teamId)]);
+}
+
+async function getEmployeeVisibleTeamIds(userId: string): Promise<number[]> {
+  const ownTeamId = await getUserTeamId(userId);
+  return getVisibleTeamIdsForTeam(ownTeamId);
+}
+
+async function replaceTeamVisibility(
+  client: PoolClient,
+  teamId: number,
+  visibleToTeamIds: Array<number | string | null | undefined>
+): Promise<void> {
+  if (!(await hasTeamVisibilityTable())) {
+    return;
+  }
+
+  const normalizedIds = normalizeTeamIdList(visibleToTeamIds).filter((visibleId) => visibleId !== teamId);
+
+  await client.query(
+    `
+      DELETE FROM team_visibility
+      WHERE team_id = $1
+         OR visible_team_id = $1
+    `,
+    [teamId]
+  );
+
+  for (const visibleTeamId of normalizedIds) {
+    await client.query(
+      `
+        INSERT INTO team_visibility (team_id, visible_team_id)
+        VALUES ($1, $2)
+        ON CONFLICT (team_id, visible_team_id) DO NOTHING
+      `,
+      [teamId, visibleTeamId]
+    );
+  }
+}
+
+async function listTeamsWithVisibility(): Promise<Team[]> {
+  const supportsVisibility = await hasTeamVisibilityTable();
+  const rows = await queryRows<Team & { visibleToTeamIds: unknown }>(
+    `
+      SELECT
+        t.id,
+        t.name,
+        t.max_concurrent_leaves as "maxConcurrentLeaves",
+        t.created_at as "createdAt",
+        t.updated_at as "updatedAt",
+        ${
+          supportsVisibility
+            ? `COALESCE((
+                SELECT json_agg(linked_team_id ORDER BY linked_team_id)
+                FROM (
+                  SELECT tv.visible_team_id as linked_team_id
+                  FROM team_visibility tv
+                  WHERE tv.team_id = t.id
+                  UNION
+                  SELECT tv.team_id as linked_team_id
+                  FROM team_visibility tv
+                  WHERE tv.visible_team_id = t.id
+                ) linked
+              ), '[]'::json)`
+            : `'[]'::json`
+        } as "visibleToTeamIds"
+      FROM teams t
+      ORDER BY t.name ASC
+    `
+  );
+
+  return rows.map((row) => ({
+    ...row,
+    id: Number(row.id),
+    visibleToTeamIds: Array.isArray(row.visibleToTeamIds)
+      ? normalizeTeamIdList(row.visibleToTeamIds as Array<number | string | null | undefined>)
+      : [],
+  }));
+}
+
+async function getManagerVisibleTeamIds(userId: string): Promise<number[]> {
+  const [ownTeamId, managedTeamIds] = await Promise.all([
+    getUserTeamId(userId),
+    getManagedTeamIds(userId),
+  ]);
+  return mergeVisibleTeamIds(ownTeamId, managedTeamIds);
+}
+
 async function canManagerAccessTeam(userId: string, teamId: number | string | null): Promise<boolean> {
+  if (teamId === null || teamId === undefined) {
+    return false;
+  }
+
+  const normalizedTeamId = Number(teamId);
+  if (!Number.isFinite(normalizedTeamId)) {
+    return false;
+  }
+
+  const visibleTeamIds = await getManagerVisibleTeamIds(userId);
+  return visibleTeamIds.includes(normalizedTeamId);
+}
+
+async function canManagerManageTeam(userId: string, teamId: number | string | null): Promise<boolean> {
   if (teamId === null || teamId === undefined) {
     return false;
   }
@@ -315,6 +533,14 @@ async function getManagerRecipientIds(teamId: number | null): Promise<string[]> 
 
   const rows = await queryRows<{ id: string }>(
     "SELECT id FROM users WHERE role = 'MANAGER' AND is_active = true",
+    []
+  );
+  return rows.map((row) => row.id);
+}
+
+async function getAdminRecipientIds(): Promise<string[]> {
+  const rows = await queryRows<{ id: string }>(
+    "SELECT id FROM users WHERE role = 'ADMIN' AND is_active = true",
     []
   );
   return rows.map((row) => row.id);
@@ -801,14 +1027,14 @@ async function resolveStatsScope(
 
   let teamId: number | null = requestedTeamId;
   let teamName: string | null = null;
-  let managerTeamIds: number[] = [];
+  let visibleManagerTeamIds: number[] = [];
 
   if (isManagerUser && !isAdminUser) {
-    managerTeamIds = await getManagedTeamIds(auth.userID);
-    if (managerTeamIds.length === 0) {
+    visibleManagerTeamIds = await getManagerVisibleTeamIds(auth.userID);
+    if (visibleManagerTeamIds.length === 0) {
       return { teamId: null, teamName: null, members: [], allMembers: [] };
     }
-    if (requestedTeamId && !managerTeamIds.includes(requestedTeamId)) {
+    if (requestedTeamId && !visibleManagerTeamIds.includes(requestedTeamId)) {
       throw new HttpError(403, "Cannot access another team's statistics");
     }
   }
@@ -828,7 +1054,7 @@ async function resolveStatsScope(
     teamConditions.push(`team_id = $${teamParams.length + 1}`);
     teamParams.push(teamId);
   } else if (isManagerUser && !isAdminUser) {
-    addTeamScopeFilter(teamConditions, teamParams, "team_id", managerTeamIds);
+    addTeamScopeFilter(teamConditions, teamParams, "team_id", visibleManagerTeamIds);
   }
 
   const allMembers = await queryRows<{ id: string; name: string }>(
@@ -1804,6 +2030,8 @@ async function sendLeaveSubmittedNotifications(
   requestId: number,
   requesterUserId: string,
   payload: {
+    sourceRequestId?: number | null;
+    requestKind?: LeaveRequestKind;
     type?: string;
     startDate?: string;
     endDate?: string;
@@ -1820,6 +2048,8 @@ async function sendLeaveSubmittedNotifications(
 
   const notificationPayload = {
     requestId,
+    sourceRequestId: payload.sourceRequestId ?? null,
+    requestKind: payload.requestKind ?? "STANDARD",
     userId: requesterUserId,
     userName: requester?.name,
     type: payload.type,
@@ -1969,23 +2199,12 @@ async function upsertLeaveBalanceAllowance(
   );
 }
 
-async function getShowTeamCalendarForEmployees(): Promise<boolean> {
-  try {
-    const settings = await queryRow<{ showTeamCalendarForEmployees: boolean }>(
-      "SELECT show_team_calendar_for_employees as \"showTeamCalendarForEmployees\" FROM settings LIMIT 1",
-      []
-    );
-    return settings?.showTeamCalendarForEmployees ?? false;
-  } catch {
-    return false;
-  }
-}
-
 type DatabaseBackup = {
   version: number;
   exportedAt: string;
   tables: {
     teams: Record<string, unknown>[];
+    team_visibility?: Record<string, unknown>[];
     users: Record<string, unknown>[];
     leave_requests: Record<string, unknown>[];
     holidays: Record<string, unknown>[];
@@ -2180,7 +2399,15 @@ app.get("/users/me", asyncHandler(async (req, res) => {
       ? Boolean(user.profileCompleted)
       : Boolean(user.profileCompleted && user.birthDate && user.teamId);
 
-  res.json({ ...user, onboardingCompleted });
+  const managedTeamIds = user.role === "MANAGER" ? await getManagedTeamIds(user.id) : [];
+  const visibleTeamIds =
+    user.role === "MANAGER"
+      ? await getManagerVisibleTeamIds(user.id)
+      : user.role === "ADMIN"
+        ? (await listTeamsWithVisibility()).map((team) => team.id)
+        : await getEmployeeVisibleTeamIds(user.id);
+
+  res.json({ ...user, onboardingCompleted, managedTeamIds, visibleTeamIds });
 }));
 
 app.patch("/users/me/onboarding", asyncHandler(async (req, res) => {
@@ -2324,10 +2551,10 @@ app.get("/users", asyncHandler(async (req, res) => {
   let teamFilter = "";
   let params: any[] = [];
   if (isManagerUser && !isAdminUser) {
-    const managerTeamIds = await getManagedTeamIds(auth.userID);
-    if (managerTeamIds.length > 0) {
+    const visibleTeamIds = await getManagerVisibleTeamIds(auth.userID);
+    if (visibleTeamIds.length > 0) {
       teamFilter = "WHERE team_id = ANY($1::bigint[])";
-      params = [managerTeamIds];
+      params = [visibleTeamIds];
     } else {
       teamFilter = "WHERE 1=0";
     }
@@ -2836,17 +3063,7 @@ app.delete("/users/:id", asyncHandler(async (req, res) => {
 
 app.get("/teams", asyncHandler(async (req, res) => {
   requireAuth(req.auth ?? null);
-
-  const teams = await queryRows<Team>(
-    `
-      SELECT id, name,
-        max_concurrent_leaves as "maxConcurrentLeaves",
-        created_at as "createdAt",
-        updated_at as "updatedAt"
-      FROM teams
-      ORDER BY name ASC
-    `
-  );
+  const teams = await listTeamsWithVisibility();
 
   res.json({ teams });
 }));
@@ -2854,9 +3071,10 @@ app.get("/teams", asyncHandler(async (req, res) => {
 app.post("/teams", asyncHandler(async (req, res) => {
   const auth = requireAuth(req.auth ?? null);
   requireAdmin(auth.role);
-  const { name, maxConcurrentLeaves } = req.body as {
+  const { name, maxConcurrentLeaves, visibleToTeamIds } = req.body as {
     name?: string;
     maxConcurrentLeaves?: number | null;
+    visibleToTeamIds?: number[];
   };
 
   if (!name) {
@@ -2864,37 +3082,39 @@ app.post("/teams", asyncHandler(async (req, res) => {
   }
 
   let result: { id: number } | null = null;
+  const client = await pool.connect();
   try {
-    result = await queryRow<{ id: number }>(
+    await client.query("BEGIN");
+    result = (await client.query<{ id: number }>(
       `
         INSERT INTO teams (name, max_concurrent_leaves, created_at, updated_at)
         VALUES ($1, $2, NOW(), NOW())
         RETURNING id
       `,
       [name, maxConcurrentLeaves ?? null]
-    );
+    )).rows[0] ?? null;
+
+    if (!result) {
+      throw new HttpError(500, "Team creation failed");
+    }
+
+    await replaceTeamVisibility(client, result.id, visibleToTeamIds ?? []);
+    await client.query("COMMIT");
   } catch (error) {
+    await client.query("ROLLBACK");
     if (error instanceof Error && error.message.includes("duplicate key")) {
       throw new HttpError(409, "Team with this name already exists");
     }
     throw error;
+  } finally {
+    client.release();
   }
 
   if (!result) {
     throw new HttpError(500, "Team creation failed");
   }
 
-  const team = await queryRow<Team>(
-    `
-      SELECT id, name,
-        max_concurrent_leaves as "maxConcurrentLeaves",
-        created_at as "createdAt",
-        updated_at as "updatedAt"
-      FROM teams
-      WHERE id = $1
-    `,
-    [result.id]
-  );
+  const team = (await listTeamsWithVisibility()).find((row) => row.id === result?.id) ?? null;
 
   if (!team) {
     throw new HttpError(500, "Team creation failed");
@@ -2909,9 +3129,10 @@ app.patch("/teams/:id", asyncHandler(async (req, res) => {
   const auth = requireAuth(req.auth ?? null);
   requireAdmin(auth.role);
   const id = Number(req.params.id);
-  const { name, maxConcurrentLeaves } = req.body as {
+  const { name, maxConcurrentLeaves, visibleToTeamIds } = req.body as {
     name?: string;
     maxConcurrentLeaves?: number | null;
+    visibleToTeamIds?: number[];
   };
 
   const before = await queryRow<Record<string, unknown>>("SELECT * FROM teams WHERE id = $1", [id]);
@@ -2931,30 +3152,32 @@ app.patch("/teams/:id", asyncHandler(async (req, res) => {
     values.push(maxConcurrentLeaves ?? null);
   }
 
-  if (updates.length > 0) {
-    values.push(id);
-    updates.push(`updated_at = NOW()`);
-    try {
-      await pool.query(`UPDATE teams SET ${updates.join(", ")} WHERE id = $${values.length}`, values);
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("duplicate key")) {
-        throw new HttpError(409, "Team with this name already exists");
-      }
-      throw error;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    if (updates.length > 0) {
+      values.push(id);
+      updates.push(`updated_at = NOW()`);
+      await client.query(`UPDATE teams SET ${updates.join(", ")} WHERE id = $${values.length}`, values);
     }
+
+    if (visibleToTeamIds !== undefined) {
+      await replaceTeamVisibility(client, id, visibleToTeamIds);
+    }
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    if (error instanceof Error && error.message.includes("duplicate key")) {
+      throw new HttpError(409, "Team with this name already exists");
+    }
+    throw error;
+  } finally {
+    client.release();
   }
 
-  const team = await queryRow<Team>(
-    `
-      SELECT id, name,
-        max_concurrent_leaves as "maxConcurrentLeaves",
-        created_at as "createdAt",
-        updated_at as "updatedAt"
-      FROM teams
-      WHERE id = $1
-    `,
-    [id]
-  );
+  const team = (await listTeamsWithVisibility()).find((row) => row.id === id) ?? null;
 
   if (!team) {
     throw new HttpError(404, "Team not found");
@@ -3202,10 +3425,19 @@ app.get("/leave-requests", asyncHandler(async (req, res) => {
   const isAdminUser = isAdmin(auth.role);
   const isManagerUser = isManager(auth.role);
   const viewerId = auth.userID;
-  let managerTeamIds: number[] = [];
   let viewerTeamId: number | null = null;
+  let visibleManagerTeamIds: number[] = [];
+  let visibleEmployeeTeamIds: number[] = [];
   if (isManagerUser && !isAdminUser) {
-    managerTeamIds = await getManagedTeamIds(auth.userID);
+    const viewer = await queryRow<{ teamId: number | null }>(
+      "SELECT team_id as \"teamId\" FROM users WHERE id = $1",
+      [viewerId]
+    );
+    if (!viewer) {
+      throw new HttpError(404, "User not found");
+    }
+    viewerTeamId = viewer.teamId;
+    visibleManagerTeamIds = await getManagerVisibleTeamIds(auth.userID);
   }
   if (!isManagerUser && !isAdminUser) {
     const viewer = await queryRow<{ teamId: number | null }>(
@@ -3216,6 +3448,7 @@ app.get("/leave-requests", asyncHandler(async (req, res) => {
       throw new HttpError(404, "User not found");
     }
     viewerTeamId = viewer.teamId;
+    visibleEmployeeTeamIds = await getEmployeeVisibleTeamIds(viewerId);
   }
   const conditions: string[] = ["1=1"];
   const values: any[] = [];
@@ -3233,7 +3466,7 @@ app.get("/leave-requests", asyncHandler(async (req, res) => {
         "SELECT team_id as \"teamId\" FROM users WHERE id = $1",
         [userId]
       );
-      if (!target || viewerTeamId === null || target.teamId !== viewerTeamId) {
+      if (!target || target.teamId === null || !visibleEmployeeTeamIds.includes(target.teamId)) {
         throw new HttpError(403, "Not allowed to view other users' requests");
       }
     }
@@ -3242,7 +3475,7 @@ app.get("/leave-requests", asyncHandler(async (req, res) => {
         "SELECT team_id as \"teamId\" FROM users WHERE id = $1",
         [userId]
       );
-      if (!target || target.teamId === null || !managerTeamIds.includes(target.teamId)) {
+      if (!target || target.teamId === null || !visibleManagerTeamIds.includes(target.teamId)) {
         throw new HttpError(403, "Not allowed to view other teams' requests");
       }
     }
@@ -3251,9 +3484,8 @@ app.get("/leave-requests", asyncHandler(async (req, res) => {
   }
 
   if (!isManagerUser && !isAdminUser && !userId) {
-    if (viewerTeamId !== null) {
-      conditions.push(`u.team_id = $${values.length + 1}`);
-      values.push(viewerTeamId);
+    if (visibleEmployeeTeamIds.length > 0) {
+      addTeamScopeFilter(conditions, values, "u.team_id", visibleEmployeeTeamIds);
     } else {
       conditions.push(`lr.user_id = $${values.length + 1}`);
       values.push(viewerId);
@@ -3261,8 +3493,17 @@ app.get("/leave-requests", asyncHandler(async (req, res) => {
   }
 
   if (isManagerUser && !isAdminUser && !userId) {
-    addTeamScopeFilter(conditions, values, "u.team_id", managerTeamIds);
+    addTeamScopeFilter(conditions, values, "u.team_id", visibleManagerTeamIds);
   }
+
+  conditions.push(`
+    NOT EXISTS (
+      SELECT 1
+      FROM leave_requests pending_child
+      WHERE pending_child.source_request_id = lr.id
+        AND pending_child.status = 'PENDING'
+    )
+  `);
 
   if (status) {
     conditions.push(`lr.status = $${values.length + 1}`);
@@ -3285,10 +3526,10 @@ app.get("/leave-requests", asyncHandler(async (req, res) => {
   }
 
   if (teamId) {
-    if (!isManagerUser && !isAdminUser && teamId !== viewerTeamId) {
+    if (!isManagerUser && !isAdminUser && !visibleEmployeeTeamIds.includes(teamId)) {
       throw new HttpError(403, "Not allowed to view other teams' requests");
     }
-    if (isManagerUser && !isAdminUser && !managerTeamIds.includes(teamId)) {
+    if (isManagerUser && !isAdminUser && !visibleManagerTeamIds.includes(teamId)) {
       throw new HttpError(403, "Not allowed to view other teams' requests");
     }
     conditions.push(`u.team_id = $${values.length + 1}`);
@@ -3299,6 +3540,15 @@ app.get("/leave-requests", asyncHandler(async (req, res) => {
       SELECT 
         lr.id, lr.user_id as "userId", lr.type,
         u.name as "userName",
+        lr.source_request_id as "sourceRequestId",
+        lr.request_kind as "requestKind",
+        src.type as "sourceType",
+        src.status as "sourceStatus",
+        src.start_date::date::text as "sourceStartDate",
+        src.end_date::date::text as "sourceEndDate",
+        src.start_time::text as "sourceStartTime",
+        src.end_time::text as "sourceEndTime",
+        src.computed_hours as "sourceComputedHours",
         lr.start_date::date::text as "startDate",
         lr.end_date::date::text as "endDate",
         lr.start_time::text as "startTime",
@@ -3314,6 +3564,7 @@ app.get("/leave-requests", asyncHandler(async (req, res) => {
         lr.updated_at as "updatedAt"
       FROM leave_requests lr
       LEFT JOIN users u ON lr.user_id = u.id
+      LEFT JOIN leave_requests src ON src.id = lr.source_request_id
       WHERE ${conditions.join(" AND ")}
       ORDER BY lr.start_date DESC, lr.created_at DESC
     `;
@@ -3359,16 +3610,31 @@ app.get("/leave-requests", asyncHandler(async (req, res) => {
 
       const allowanceHours = await getAnnualLeaveAllowanceHoursForUser(request.userId, currentYear);
       const bookedHours = bookedByUserId.get(request.userId) ?? 0;
+      const requestHours = Number(request.computedHours ?? 0);
+      const sourceHours = Number(request.sourceComputedHours ?? 0);
       const bookedWithoutThisRequest =
         request.status === "PENDING"
-          ? Math.max(0, bookedHours - request.computedHours)
+          ? Math.max(0, bookedHours - requestHours)
           : bookedHours;
+
+      let bookedAfterApproval = bookedHours;
+      if (request.status === "PENDING") {
+        if (request.requestKind === "CHANGE" && request.sourceRequestId) {
+          // Pending change already reserves the new hours in bookedHours.
+          // Approval removes the original approved request and keeps the new one.
+          bookedAfterApproval = Math.max(0, bookedHours - sourceHours);
+        } else if (request.requestKind === "CANCELLATION" && request.sourceRequestId) {
+          // Pending cancellation reserves its own copied hours in bookedHours.
+          // Approval removes both the pending cancellation request and the original approved request.
+          bookedAfterApproval = Math.max(0, bookedHours - requestHours - sourceHours);
+        }
+      }
 
       // bookedHours includes both PENDING and APPROVED, so for a pending request we show:
       // - currentBalanceHours: balance without counting this particular pending request yet
-      // - balanceAfterApprovalHours: balance with the request counted (reserved)
+      // - balanceAfterApprovalHours: balance after applying the final approved result
       const currentBalanceHours = allowanceHours - bookedWithoutThisRequest;
-      const balanceAfterApprovalHours = allowanceHours - bookedHours;
+      const balanceAfterApprovalHours = allowanceHours - bookedAfterApproval;
 
       return {
         ...request,
@@ -3415,7 +3681,7 @@ app.post("/leave-requests", asyncHandler(async (req, res) => {
         "SELECT team_id as \"teamId\" FROM users WHERE id = $1",
         [targetUserId]
       );
-      if (!target || !(await canManagerAccessTeam(auth.userID, target.teamId))) {
+      if (!target || !(await canManagerManageTeam(auth.userID, target.teamId))) {
         throw new HttpError(403, "Cannot create requests for another team");
       }
     }
@@ -3568,6 +3834,7 @@ app.patch("/leave-requests/:id", asyncHandler(async (req, res) => {
     `
       SELECT 
         lr.id, lr.user_id as "userId", lr.type,
+        lr.source_request_id as "sourceRequestId",
         lr.start_date::date::text as "startDate",
         lr.end_date::date::text as "endDate",
         lr.start_time::text as "startTime",
@@ -3595,7 +3862,7 @@ app.patch("/leave-requests/:id", asyncHandler(async (req, res) => {
 
   let isSameTeam = before.userId === auth.userID;
   if (isManagerUser && !isAdminUser && before.userId !== auth.userID) {
-    isSameTeam = await canManagerAccessTeam(auth.userID, before.teamId);
+    isSameTeam = await canManagerManageTeam(auth.userID, before.teamId);
     if (!isSameTeam) {
       throw new HttpError(403, "You are not allowed to edit this request");
     }
@@ -3605,10 +3872,19 @@ app.patch("/leave-requests/:id", asyncHandler(async (req, res) => {
     throw new HttpError(403, "You are not allowed to edit this request");
   }
 
+  const isOwnApprovedChangeRequest =
+    !isAdminUser
+    && before.userId === auth.userID
+    && before.status === "APPROVED";
+
   const newStartDate = startDate ?? before.startDate;
   const newEndDate = endDate ?? before.endDate;
+  const isEmployeeApprovedRequestFlow =
+    !isAdminUser
+    && before.userId === auth.userID
+    && before.status === "APPROVED";
 
-  if (startDate || endDate) {
+  if (startDate || endDate || isEmployeeApprovedRequestFlow) {
     validateDateRange(newStartDate, newEndDate);
     validateNotInPast(newStartDate, { allowPast: true });
 
@@ -3618,11 +3894,12 @@ app.patch("/leave-requests/:id", asyncHandler(async (req, res) => {
         FROM leave_requests
         WHERE user_id = $1
           AND id != $2
+          AND ($5::bigint IS NULL OR source_request_id != $5)
           AND status IN ('PENDING', 'APPROVED')
           AND start_date <= $3
           AND end_date >= $4
       `,
-      [before.userId, id, newEndDate, newStartDate]
+      [before.userId, id, newEndDate, newStartDate, isEmployeeApprovedRequestFlow ? before.id : null]
     );
 
     if (overlaps && overlaps.count > 0) {
@@ -3656,6 +3933,95 @@ app.patch("/leave-requests/:id", asyncHandler(async (req, res) => {
       startTime ?? before.startTime,
       endTime ?? before.endTime
     );
+  }
+
+  if (isOwnApprovedChangeRequest) {
+    const existingChangeRequest = await queryRow<{ id: number }>(
+      `
+        SELECT id
+        FROM leave_requests
+        WHERE source_request_id = $1
+          AND request_kind = 'CHANGE'
+          AND status = 'PENDING'
+        LIMIT 1
+      `,
+      [before.id]
+    );
+
+    if (existingChangeRequest) {
+      throw new HttpError(409, "A change request for this approved leave is already waiting for approval");
+    }
+
+    const result = await queryRow<{ id: number }>(
+      `
+        INSERT INTO leave_requests (
+          user_id, type, source_request_id, request_kind, start_date, end_date, start_time, end_time,
+          reason, computed_hours, status, created_at, updated_at
+        ) VALUES ($1, $2, $3, 'CHANGE', $4, $5, $6, $7, $8, $9, 'PENDING', NOW(), NOW())
+        RETURNING id
+      `,
+      [
+        before.userId,
+        type ?? before.type,
+        before.id,
+        newStartDate,
+        newEndDate,
+        startTime ?? before.startTime ?? null,
+        endTime ?? before.endTime ?? null,
+        reason ?? before.reason ?? null,
+        computedHours,
+      ]
+    );
+
+    const changeRequest = await queryRow<LeaveRequest>(
+      `
+        SELECT 
+          id, user_id as "userId", type,
+          source_request_id as "sourceRequestId",
+          request_kind as "requestKind",
+          start_date::date::text as "startDate",
+          end_date::date::text as "endDate",
+          start_time::text as "startTime",
+          end_time::text as "endTime",
+          status, reason, manager_comment as "managerComment",
+          approved_by as "approvedBy",
+          approved_at as "approvedAt",
+          computed_hours as "computedHours",
+          attachment_url as "attachmentUrl",
+          created_at as "createdAt",
+          updated_at as "updatedAt"
+        FROM leave_requests
+        WHERE id = $1
+      `,
+      [result?.id]
+    );
+
+    await createEntityAuditLog(
+      auth.userID,
+      "leave_request",
+      changeRequest!.id,
+      "CHANGE_REQUEST_CREATE",
+      before as unknown as Record<string, unknown>,
+      changeRequest as unknown as Record<string, unknown>
+    );
+
+    runInBackground(
+      sendLeaveSubmittedNotifications(changeRequest!.id, changeRequest!.userId, {
+        sourceRequestId: changeRequest?.sourceRequestId,
+        requestKind: changeRequest?.requestKind,
+        type: changeRequest?.type,
+        startDate: changeRequest?.startDate,
+        endDate: changeRequest?.endDate,
+        startTime: changeRequest?.startTime,
+        endTime: changeRequest?.endTime,
+        status: changeRequest?.status,
+        computedHours: changeRequest?.computedHours,
+      }),
+      `leave-change-request:${changeRequest!.id}`
+    );
+
+    res.json(changeRequest);
+    return;
   }
 
   const updates: string[] = [];
@@ -3769,6 +4135,7 @@ app.delete("/leave-requests/:id", asyncHandler(async (req, res) => {
     `
       SELECT 
         lr.id, lr.user_id as "userId", lr.type,
+        lr.source_request_id as "sourceRequestId",
         lr.start_date::date::text as "startDate",
         lr.end_date::date::text as "endDate",
         lr.start_time::text as "startTime",
@@ -3795,7 +4162,7 @@ app.delete("/leave-requests/:id", asyncHandler(async (req, res) => {
   }
 
   if (isManagerUser && !isAdminUser && request.userId !== auth.userID) {
-    if (!(await canManagerAccessTeam(auth.userID, request.teamId))) {
+    if (!(await canManagerManageTeam(auth.userID, request.teamId))) {
       throw new HttpError(403, "Cannot delete another team's request");
     }
   }
@@ -3823,6 +4190,8 @@ app.post("/leave-requests/:id/submit", asyncHandler(async (req, res) => {
     `
       SELECT 
         lr.id, lr.user_id as "userId", lr.type,
+        lr.source_request_id as "sourceRequestId",
+        lr.request_kind as "requestKind",
         lr.start_date::date::text as "startDate",
         lr.end_date::date::text as "endDate",
         lr.start_time::text as "startTime",
@@ -3879,7 +4248,7 @@ app.post("/leave-requests/:id/submit", asyncHandler(async (req, res) => {
   );
 
   if (isManagerUser && !isAdminUser && request.userId !== auth.userID) {
-    if (!(await canManagerAccessTeam(auth.userID, requester?.teamId ?? null))) {
+    if (!(await canManagerManageTeam(auth.userID, requester?.teamId ?? null))) {
       throw new HttpError(403, "Cannot submit another team's request");
     }
   }
@@ -3946,6 +4315,8 @@ app.post("/leave-requests/:id/approve", asyncHandler(async (req, res) => {
     `
       SELECT 
         lr.id, lr.user_id as "userId", lr.type,
+        lr.source_request_id as "sourceRequestId",
+        lr.request_kind as "requestKind",
         lr.start_date::date::text as "startDate",
         lr.end_date::date::text as "endDate",
         lr.start_time::text as "startTime",
@@ -3972,7 +4343,7 @@ app.post("/leave-requests/:id/approve", asyncHandler(async (req, res) => {
   }
 
   if (isManagerUser && !isAdminUser) {
-    if (!(await canManagerAccessTeam(auth.userID, request.teamId))) {
+    if (!(await canManagerManageTeam(auth.userID, request.teamId))) {
       throw new HttpError(403, "Cannot approve another team's request");
     }
   }
@@ -3981,7 +4352,9 @@ app.post("/leave-requests/:id/approve", asyncHandler(async (req, res) => {
     throw new HttpError(409, "Can only approve requests in PENDING status");
   }
 
-  if (request.teamId) {
+  const requestKind = request.requestKind ?? "STANDARD";
+
+  if (request.teamId && requestKind !== "CANCELLATION") {
     const team = await queryRow<{ maxConcurrentLeaves: number | null }>(
       `
         SELECT max_concurrent_leaves as "maxConcurrentLeaves"
@@ -3991,18 +4364,19 @@ app.post("/leave-requests/:id/approve", asyncHandler(async (req, res) => {
       [request.teamId]
     );
 
-    if (team?.maxConcurrentLeaves) {
-      const count = await queryRow<{ count: number }>(
-        `
+      if (team?.maxConcurrentLeaves) {
+        const count = await queryRow<{ count: number }>(
+          `
           SELECT COUNT(*) as count
           FROM leave_requests lr
           JOIN users u ON lr.user_id = u.id
           WHERE u.team_id = $1
             AND lr.status = 'APPROVED'
+            AND ($4::bigint IS NULL OR lr.id != $4)
             AND lr.start_date <= $2
             AND lr.end_date >= $3
         `,
-        [request.teamId, request.endDate, request.startDate]
+        [request.teamId, request.endDate, request.startDate, request.sourceRequestId ?? null]
       );
 
       if (count && count.count >= team.maxConcurrentLeaves) {
@@ -4011,22 +4385,88 @@ app.post("/leave-requests/:id/approve", asyncHandler(async (req, res) => {
     }
   }
 
-  await pool.query(
-    `
-      UPDATE leave_requests
-      SET status = 'APPROVED',
-          approved_by = $1,
-          approved_at = NOW(),
-          manager_comment = $2
-      WHERE id = $3
-    `,
-    [auth.userID, comment ?? null, id]
-  );
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    if (request.sourceRequestId) {
+      const sourceRequest = await client.query<{ id: number; userId: string; status: LeaveStatus }>(
+        `
+          SELECT id, user_id as "userId", status
+          FROM leave_requests
+          WHERE id = $1
+          FOR UPDATE
+        `,
+        [request.sourceRequestId]
+      );
+      const sourceRow = sourceRequest.rows[0];
+      if (!sourceRow || sourceRow.userId !== request.userId || sourceRow.status !== "APPROVED") {
+        throw new HttpError(409, "Original approved request for this change is no longer available");
+      }
+
+      if (requestKind === "CANCELLATION") {
+        await client.query(
+          `
+            UPDATE leave_requests
+            SET status = 'CANCELLED',
+                request_kind = 'STANDARD',
+                source_request_id = NULL,
+                approved_by = $1,
+                approved_at = NOW(),
+                manager_comment = $2,
+                updated_at = NOW()
+            WHERE id = $3
+          `,
+          [auth.userID, comment ?? null, id]
+        );
+
+        await client.query("DELETE FROM leave_requests WHERE id = $1", [request.sourceRequestId]);
+      } else {
+        await client.query(
+          `
+            UPDATE leave_requests
+            SET status = 'APPROVED',
+                request_kind = 'STANDARD',
+                source_request_id = NULL,
+                approved_by = $1,
+                approved_at = NOW(),
+                manager_comment = $2,
+                updated_at = NOW()
+            WHERE id = $3
+          `,
+          [auth.userID, comment ?? null, id]
+        );
+
+        await client.query("DELETE FROM leave_requests WHERE id = $1", [request.sourceRequestId]);
+      }
+    } else {
+      await client.query(
+        `
+          UPDATE leave_requests
+          SET status = 'APPROVED',
+              approved_by = $1,
+              approved_at = NOW(),
+              manager_comment = $2
+          WHERE id = $3
+        `,
+        [auth.userID, comment ?? null, id]
+      );
+    }
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 
   const updated = await queryRow<LeaveRequest>(
     `
       SELECT 
         id, user_id as "userId", type,
+        source_request_id as "sourceRequestId",
+        request_kind as "requestKind",
         start_date::date::text as "startDate",
         end_date::date::text as "endDate",
         start_time::text as "startTime",
@@ -4055,21 +4495,80 @@ app.post("/leave-requests/:id/approve", asyncHandler(async (req, res) => {
     updated as unknown as Record<string, unknown>
   );
 
-  await createNotification(
-    request.userId,
-    "REQUEST_APPROVED",
-    {
-      requestId: id,
-      type: updated?.type,
-      startDate: updated?.startDate,
-      endDate: updated?.endDate,
-      startTime: updated?.startTime,
-      endTime: updated?.endTime,
-      status: updated?.status,
-      computedHours: updated?.computedHours,
-      managerComment: updated?.managerComment,
-    },
-    `leave_request:${id}:approved`
+  if (request.sourceRequestId && requestKind === "CHANGE") {
+    await createEntityAuditLog(
+      auth.userID,
+      "leave_request",
+      request.sourceRequestId,
+      "CHANGE_REQUEST_SUPERSEDED",
+      { id: request.sourceRequestId, status: "APPROVED" },
+      { id: request.sourceRequestId, status: "CANCELLED", replacedByRequestId: id }
+    );
+  }
+
+  if (request.sourceRequestId && requestKind === "CANCELLATION") {
+    await createEntityAuditLog(
+      auth.userID,
+      "leave_request",
+      request.sourceRequestId,
+      "CANCELLATION_REQUEST_APPROVED",
+      { id: request.sourceRequestId, status: "APPROVED" },
+      { id: request.sourceRequestId, status: "CANCELLED", cancelledByRequestId: id }
+    );
+  }
+
+  const requester = await queryRow<{ teamId: number | null; name: string | null }>(
+    "SELECT team_id as \"teamId\", name FROM users WHERE id = $1",
+    [request.userId]
+  );
+
+  const notificationPayload = {
+    requestId: id,
+    sourceRequestId: updated?.sourceRequestId,
+    requestKind: updated?.requestKind ?? requestKind,
+    userId: request.userId,
+    userName: requester?.name ?? null,
+    type: updated?.type,
+    startDate: updated?.startDate,
+    endDate: updated?.endDate,
+    startTime: updated?.startTime,
+    endTime: updated?.endTime,
+    status: updated?.status,
+    computedHours: updated?.computedHours,
+    managerComment: updated?.managerComment,
+    approvedBy: auth.userID,
+    approverName: auth.name,
+    approverEmail: auth.email,
+  };
+
+  const managerIds = await getManagerRecipientIds(requester?.teamId ?? null);
+  const adminIds = await getAdminRecipientIds();
+  runInBackground(
+    Promise.allSettled([
+      createNotification(
+        request.userId,
+        "REQUEST_APPROVED",
+        notificationPayload,
+        `leave_request:${id}:approved:requester`
+      ),
+      ...managerIds.map((managerId) =>
+        createNotification(
+          managerId,
+          "REQUEST_APPROVED_FOR_REVIEWERS",
+          notificationPayload,
+          `leave_request:${id}:approved:${managerId}`
+        )
+      ),
+      ...adminIds.map((adminId) =>
+        createNotification(
+          adminId,
+          "REQUEST_APPROVED_FOR_REVIEWERS",
+          notificationPayload,
+          `leave_request:${id}:approved:${adminId}`
+        )
+      ),
+    ]).then(() => undefined),
+    `leave-approved:${id}`
   );
 
   res.json(updated);
@@ -4087,6 +4586,8 @@ app.post("/leave-requests/:id/reject", asyncHandler(async (req, res) => {
     `
       SELECT 
         id, user_id as "userId", type,
+        source_request_id as "sourceRequestId",
+        request_kind as "requestKind",
         start_date::date::text as "startDate",
         end_date::date::text as "endDate",
         start_time::text as "startTime",
@@ -4112,7 +4613,7 @@ app.post("/leave-requests/:id/reject", asyncHandler(async (req, res) => {
   }
 
   if (isManagerUser && !isAdminUser) {
-    if (!(await canManagerAccessTeam(auth.userID, request.teamId))) {
+    if (!(await canManagerManageTeam(auth.userID, request.teamId))) {
       throw new HttpError(403, "Cannot reject another team's request");
     }
   }
@@ -4137,6 +4638,8 @@ app.post("/leave-requests/:id/reject", asyncHandler(async (req, res) => {
     `
       SELECT 
         id, user_id as "userId", type,
+        source_request_id as "sourceRequestId",
+        request_kind as "requestKind",
         start_date::date::text as "startDate",
         end_date::date::text as "endDate",
         start_time::text as "startTime",
@@ -4165,21 +4668,58 @@ app.post("/leave-requests/:id/reject", asyncHandler(async (req, res) => {
     updated as unknown as Record<string, unknown>
   );
 
-  await createNotification(
-    request.userId,
-    "REQUEST_REJECTED",
-    {
-      requestId: id,
-      type: updated?.type,
-      startDate: updated?.startDate,
-      endDate: updated?.endDate,
-      startTime: updated?.startTime,
-      endTime: updated?.endTime,
-      status: updated?.status,
-      computedHours: updated?.computedHours,
-      managerComment: updated?.managerComment,
-    },
-    `leave_request:${id}:rejected`
+  const requester = await queryRow<{ teamId: number | null; name: string | null }>(
+    "SELECT team_id as \"teamId\", name FROM users WHERE id = $1",
+    [request.userId]
+  );
+
+  const notificationPayload = {
+    requestId: id,
+    sourceRequestId: updated?.sourceRequestId,
+    requestKind: updated?.requestKind ?? request.requestKind ?? "STANDARD",
+    userId: request.userId,
+    userName: requester?.name ?? null,
+    type: updated?.type,
+    startDate: updated?.startDate,
+    endDate: updated?.endDate,
+    startTime: updated?.startTime,
+    endTime: updated?.endTime,
+    status: updated?.status,
+    computedHours: updated?.computedHours,
+    managerComment: updated?.managerComment,
+    approvedBy: auth.userID,
+    approverName: auth.name,
+    approverEmail: auth.email,
+  };
+
+  const managerIds = await getManagerRecipientIds(requester?.teamId ?? null);
+  const adminIds = await getAdminRecipientIds();
+  runInBackground(
+    Promise.allSettled([
+      createNotification(
+        request.userId,
+        "REQUEST_REJECTED",
+        notificationPayload,
+        `leave_request:${id}:rejected:requester`
+      ),
+      ...managerIds.map((managerId) =>
+        createNotification(
+          managerId,
+          "REQUEST_REJECTED_FOR_REVIEWERS",
+          notificationPayload,
+          `leave_request:${id}:rejected:${managerId}`
+        )
+      ),
+      ...adminIds.map((adminId) =>
+        createNotification(
+          adminId,
+          "REQUEST_REJECTED_FOR_REVIEWERS",
+          notificationPayload,
+          `leave_request:${id}:rejected:${adminId}`
+        )
+      ),
+    ]).then(() => undefined),
+    `leave-rejected:${id}`
   );
 
   res.json(updated);
@@ -4195,6 +4735,8 @@ app.post("/leave-requests/:id/cancel", asyncHandler(async (req, res) => {
     `
       SELECT 
         id, user_id as "userId", type,
+        source_request_id as "sourceRequestId",
+        request_kind as "requestKind",
         start_date::date::text as "startDate",
         end_date::date::text as "endDate",
         start_time::text as "startTime",
@@ -4232,9 +4774,104 @@ app.post("/leave-requests/:id/cancel", asyncHandler(async (req, res) => {
   );
 
   if (isManagerUser && !isAdminUser && request.userId !== auth.userID) {
-    if (!(await canManagerAccessTeam(auth.userID, requester?.teamId ?? null))) {
+    if (!(await canManagerManageTeam(auth.userID, requester?.teamId ?? null))) {
       throw new HttpError(403, "Cannot cancel another team's request");
     }
+  }
+
+  const isEmployeeOwnApprovedRequest =
+    !isManagerUser
+    && !isAdminUser
+    && request.userId === auth.userID
+    && request.status === "APPROVED";
+
+  if (isEmployeeOwnApprovedRequest) {
+    const existingCancellationRequest = await queryRow<{ id: number }>(
+      `
+        SELECT id
+        FROM leave_requests
+        WHERE source_request_id = $1
+          AND request_kind = 'CANCELLATION'
+          AND status = 'PENDING'
+        LIMIT 1
+      `,
+      [request.id]
+    );
+
+    if (existingCancellationRequest) {
+      throw new HttpError(409, "Cancellation request for this approved leave is already waiting for approval");
+    }
+
+    const result = await queryRow<{ id: number }>(
+      `
+        INSERT INTO leave_requests (
+          user_id, type, source_request_id, request_kind, start_date, end_date, start_time, end_time,
+          reason, computed_hours, status, created_at, updated_at
+        ) VALUES ($1, $2, $3, 'CANCELLATION', $4, $5, $6, $7, $8, $9, 'PENDING', NOW(), NOW())
+        RETURNING id
+      `,
+      [
+        request.userId,
+        request.type,
+        request.id,
+        request.startDate,
+        request.endDate,
+        request.startTime ?? null,
+        request.endTime ?? null,
+        request.reason ?? null,
+        request.computedHours,
+      ]
+    );
+
+    const cancellationRequest = await queryRow<LeaveRequest>(
+      `
+        SELECT 
+          id, user_id as "userId", type,
+          source_request_id as "sourceRequestId",
+          request_kind as "requestKind",
+          start_date::date::text as "startDate",
+          end_date::date::text as "endDate",
+          start_time::text as "startTime",
+          end_time::text as "endTime",
+          status, reason, manager_comment as "managerComment",
+          approved_by as "approvedBy",
+          approved_at as "approvedAt",
+          computed_hours as "computedHours",
+          attachment_url as "attachmentUrl",
+          created_at as "createdAt",
+          updated_at as "updatedAt"
+        FROM leave_requests
+        WHERE id = $1
+      `,
+      [result?.id]
+    );
+
+    await createEntityAuditLog(
+      auth.userID,
+      "leave_request",
+      cancellationRequest!.id,
+      "CANCELLATION_REQUEST_CREATE",
+      request as unknown as Record<string, unknown>,
+      cancellationRequest as unknown as Record<string, unknown>
+    );
+
+    runInBackground(
+      sendLeaveSubmittedNotifications(cancellationRequest!.id, cancellationRequest!.userId, {
+        sourceRequestId: cancellationRequest?.sourceRequestId,
+        requestKind: cancellationRequest?.requestKind,
+        type: cancellationRequest?.type,
+        startDate: cancellationRequest?.startDate,
+        endDate: cancellationRequest?.endDate,
+        startTime: cancellationRequest?.startTime,
+        endTime: cancellationRequest?.endTime,
+        status: cancellationRequest?.status,
+        computedHours: cancellationRequest?.computedHours,
+      }),
+      `leave-cancellation-request:${cancellationRequest!.id}`
+    );
+
+    res.json(cancellationRequest);
+    return;
   }
 
   await pool.query("UPDATE leave_requests SET status = 'CANCELLED' WHERE id = $1", [id]);
@@ -4311,7 +4948,6 @@ app.get("/calendar", asyncHandler(async (req, res) => {
   const isManagerUser = isManager(auth.role);
   const viewerId = auth.userID;
   let viewerTeamId: number | null = null;
-  let managerTeamIds: number[] = [];
   let visibleTeamIds: number[] = [];
 
   if (!isAdminUser) {
@@ -4328,14 +4964,9 @@ app.get("/calendar", asyncHandler(async (req, res) => {
   }
 
   if (isManagerUser && !isAdminUser) {
-    managerTeamIds = await getManagedTeamIds(viewerId);
-    visibleTeamIds = Array.from(
-      new Set(
-        [viewerTeamId, ...managerTeamIds].filter((value): value is number => Number.isFinite(value) && value !== null)
-      )
-    );
+    visibleTeamIds = await getManagerVisibleTeamIds(viewerId);
   } else if (!isAdminUser && viewerTeamId !== null) {
-    visibleTeamIds = [viewerTeamId];
+    visibleTeamIds = await getEmployeeVisibleTeamIds(viewerId);
   }
 
   if (!startDate || !endDate) {
@@ -4347,6 +4978,15 @@ app.get("/calendar", asyncHandler(async (req, res) => {
     "lr.end_date >= $1",
     "lr.status != 'DRAFT'",
     "lr.status != 'REJECTED'",
+    "(lr.request_kind IS NULL OR lr.request_kind != 'CANCELLATION')",
+    `
+      NOT EXISTS (
+        SELECT 1
+        FROM leave_requests pending_child
+        WHERE pending_child.source_request_id = lr.id
+          AND pending_child.status = 'PENDING'
+      )
+    `,
   ];
   const values: any[] = [startDate, endDate];
 
@@ -4368,12 +5008,11 @@ app.get("/calendar", asyncHandler(async (req, res) => {
   }
 
   if (!isManagerUser && !isAdminUser) {
-    if (teamId && teamId !== viewerTeamId) {
+    if (teamId && !visibleTeamIds.includes(teamId)) {
       throw new HttpError(403, "Cannot access another team's calendar");
     }
-    if (viewerTeamId) {
-      conditions.push(`u.team_id = $${values.length + 1}`);
-      values.push(viewerTeamId);
+    if (visibleTeamIds.length > 0) {
+      addTeamScopeFilter(conditions, values, "u.team_id", visibleTeamIds);
     } else {
       conditions.push(`lr.user_id = $${values.length + 1}`);
       values.push(viewerId);
@@ -4475,6 +5114,112 @@ app.get("/calendar", asyncHandler(async (req, res) => {
   res.json({ events: merged });
 }));
 
+app.get("/debug/calendar-scope", asyncHandler(async (req, res) => {
+  const auth = requireAuth(req.auth ?? null);
+  const startDate = (req.query.startDate as string) || "2026-06-01";
+  const endDate = (req.query.endDate as string) || "2026-06-30";
+  const isAdminUser = isAdmin(auth.role);
+  const isManagerUser = isManager(auth.role);
+  const viewerId = auth.userID;
+  const viewerTeamId = await getUserTeamId(viewerId);
+  const managedTeamIds = isManagerUser ? await getManagedTeamIds(viewerId) : [];
+  const visibleTeamIds = isManagerUser
+    ? await getManagerVisibleTeamIds(viewerId)
+    : viewerTeamId !== null
+      ? [viewerTeamId]
+      : [];
+
+  const teamRows = visibleTeamIds.length > 0
+    ? await queryRows<{ id: number; name: string }>(
+      `
+        SELECT id, name
+        FROM teams
+        WHERE id = ANY($1::bigint[])
+        ORDER BY name ASC
+      `,
+      [visibleTeamIds]
+    )
+    : [];
+
+  const values: any[] = [startDate, endDate];
+  const conditions: string[] = [
+    "lr.start_date <= $2",
+    "lr.end_date >= $1",
+    "lr.status != 'DRAFT'",
+    "lr.status != 'REJECTED'",
+    "(lr.request_kind IS NULL OR lr.request_kind != 'CANCELLATION')",
+    `
+      NOT EXISTS (
+        SELECT 1
+        FROM leave_requests pending_child
+        WHERE pending_child.source_request_id = lr.id
+          AND pending_child.status = 'PENDING'
+      )
+    `,
+  ];
+
+  if (isManagerUser && !isAdminUser) {
+    if (visibleTeamIds.length > 0) {
+      addTeamScopeFilter(conditions, values, "u.team_id", visibleTeamIds);
+    } else {
+      conditions.push(`lr.user_id = $${values.length + 1}`);
+      values.push(viewerId);
+    }
+  } else if (!isAdminUser) {
+    if (viewerTeamId !== null) {
+      conditions.push(`u.team_id = $${values.length + 1}`);
+      values.push(viewerTeamId);
+    } else {
+      conditions.push(`lr.user_id = $${values.length + 1}`);
+      values.push(viewerId);
+    }
+  }
+
+  const events = await queryRows<{
+    id: number;
+    userId: string;
+    userName: string;
+    teamId: number | null;
+    teamName: string | null;
+    startDate: string;
+    endDate: string;
+    status: string;
+    type: string;
+  }>(
+    `
+      SELECT
+        lr.id,
+        lr.user_id as "userId",
+        u.name as "userName",
+        u.team_id as "teamId",
+        t.name as "teamName",
+        lr.start_date::date::text as "startDate",
+        lr.end_date::date::text as "endDate",
+        lr.status,
+        lr.type::text as type
+      FROM leave_requests lr
+      JOIN users u ON lr.user_id = u.id
+      LEFT JOIN teams t ON t.id = u.team_id
+      WHERE ${conditions.join(" AND ")}
+      ORDER BY lr.start_date ASC, u.name ASC
+    `,
+    values
+  );
+
+  res.json({
+    viewerId,
+    role: auth.role,
+    viewerTeamId,
+    managedTeamIds,
+    visibleTeamIds,
+    visibleTeams: teamRows,
+    startDate,
+    endDate,
+    eventCount: events.length,
+    events,
+  });
+}));
+
 type NamedayCache = {
   date: string;
   response: { date: string; names: string[]; source: "local" | "unavailable"; providerStatus?: number };
@@ -4524,13 +5269,38 @@ async function fetchSlovakNamedayToday(): Promise<{
 }
 
 app.get("/namedays/today", asyncHandler(async (req, res) => {
-  requireAuth(req.auth ?? null);
+  const auth = requireAuth(req.auth ?? null);
+  const isAdminUser = isAdmin(auth.role);
+  const isManagerUser = isManager(auth.role);
 
   const { date, names, source, providerStatus } = await fetchSlovakNamedayToday();
 
+  const conditions = ["is_active = true"];
+  const values: any[] = [];
+
+  if (isManagerUser && !isAdminUser) {
+    const visibleTeamIds = await getManagerVisibleTeamIds(auth.userID);
+    if (visibleTeamIds.length > 0) {
+      conditions.push(`team_id = ANY($${values.length + 1}::bigint[])`);
+      values.push(visibleTeamIds);
+    } else {
+      conditions.push(`id = $${values.length + 1}`);
+      values.push(auth.userID);
+    }
+  } else if (!isAdminUser) {
+    const visibleTeamIds = await getEmployeeVisibleTeamIds(auth.userID);
+    if (visibleTeamIds.length > 0) {
+      conditions.push(`team_id = ANY($${values.length + 1}::bigint[])`);
+      values.push(visibleTeamIds);
+    } else {
+      conditions.push(`id = $${values.length + 1}`);
+      values.push(auth.userID);
+    }
+  }
+
   const users = await queryRows<{ id: string; name: string }>(
-    "SELECT id, name FROM users WHERE is_active = true ORDER BY name ASC",
-    []
+    `SELECT id, name FROM users WHERE ${conditions.join(" AND ")} ORDER BY name ASC`,
+    values
   );
 
   const normalizedNamedays = new Set(names.map((n) => stripDiacritics(n).toLowerCase()));
@@ -5517,9 +6287,11 @@ app.post("/admin/test/scheduled-email", asyncHandler(async (req, res) => {
 app.get("/admin/database/export", asyncHandler(async (req, res) => {
   const auth = requireAuth(req.auth ?? null);
   requireAdmin(auth.role);
+  await hasTeamVisibilityTable();
 
   const tables = {
     teams: await queryRows<Record<string, unknown>>("SELECT * FROM teams ORDER BY id ASC"),
+    team_visibility: await queryRows<Record<string, unknown>>("SELECT * FROM team_visibility ORDER BY team_id ASC, visible_team_id ASC"),
     users: await queryRows<Record<string, unknown>>("SELECT * FROM users ORDER BY id ASC"),
     leave_requests: await queryRows<Record<string, unknown>>("SELECT * FROM leave_requests ORDER BY id ASC"),
     holidays: await queryRows<Record<string, unknown>>("SELECT * FROM holidays ORDER BY id ASC"),
@@ -5530,7 +6302,7 @@ app.get("/admin/database/export", asyncHandler(async (req, res) => {
   };
 
   const backup: DatabaseBackup = {
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     tables,
   };
@@ -5559,7 +6331,7 @@ app.post("/admin/database/import", asyncHandler(async (req, res) => {
     throw new HttpError(400, "Backup payload is required.");
   }
 
-  if (backup.version !== 1) {
+  if (backup.version !== 1 && backup.version !== 2) {
     throw new HttpError(400, "Unsupported backup version.");
   }
 
@@ -5587,10 +6359,11 @@ app.post("/admin/database/import", asyncHandler(async (req, res) => {
   try {
     await client.query("BEGIN");
     await client.query(
-      "TRUNCATE teams, users, leave_requests, holidays, leave_balances, settings, audit_logs, notifications RESTART IDENTITY CASCADE"
+      "TRUNCATE team_visibility, teams, users, leave_requests, holidays, leave_balances, settings, audit_logs, notifications RESTART IDENTITY CASCADE"
     );
 
     await insertRows(client, "teams", backup.tables.teams);
+    await insertRows(client, "team_visibility", Array.isArray(backup.tables.team_visibility) ? backup.tables.team_visibility : []);
     await insertRows(client, "users", backup.tables.users);
     await insertRows(client, "holidays", backup.tables.holidays);
     await insertRows(client, "leave_balances", backup.tables.leave_balances);
@@ -5666,10 +6439,18 @@ const port = Number(process.env.PORT ?? 4000);
 
 async function startServer() {
   await pool.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto";');
+  await hasManagerTeamsTable();
+  await hasTeamVisibilityTable();
   await pool.query(`
     ALTER TABLE leave_requests
     ADD COLUMN IF NOT EXISTS start_time TIME,
-    ADD COLUMN IF NOT EXISTS end_time TIME
+    ADD COLUMN IF NOT EXISTS end_time TIME,
+    ADD COLUMN IF NOT EXISTS source_request_id BIGINT NULL,
+    ADD COLUMN IF NOT EXISTS request_kind TEXT NOT NULL DEFAULT 'STANDARD'
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_leave_requests_source_request_id
+    ON leave_requests(source_request_id)
   `);
   await pool.query(`
     ALTER TABLE holidays

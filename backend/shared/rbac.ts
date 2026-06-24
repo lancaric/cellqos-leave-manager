@@ -4,6 +4,8 @@ import { HttpError } from "./http-error";
 type AuthData = {
   userID: string;
   role: UserRole;
+  email?: string;
+  name?: string;
 };
 
 export function isAdmin(userRole: UserRole | undefined): boolean {
@@ -48,9 +50,11 @@ export function canEditRequest(
     return true;
   }
 
-  // Manager can edit requests in their team
+  // Manager can edit requests in teams they manage, but never their own
+  // requests. Their personal requests should go through the same visible
+  // self-service flow as ordinary users.
   if (currentUserRole === "MANAGER") {
-    return isSameTeam;
+    return isSameTeam && requestUserId !== currentUserId;
   }
   
   // Employee can only edit their own requests
@@ -58,6 +62,7 @@ export function canEditRequest(
     return false;
   }
   
-  // Employee can only edit DRAFT or PENDING requests
-  return requestStatus === "DRAFT" || requestStatus === "PENDING";
+  // Employee can edit their own requests. APPROVED requests are handled
+  // in the API as change requests that must go through approval again.
+  return requestStatus === "DRAFT" || requestStatus === "PENDING" || requestStatus === "APPROVED";
 }

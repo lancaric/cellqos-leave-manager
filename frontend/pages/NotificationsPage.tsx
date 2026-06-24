@@ -21,13 +21,44 @@ function getNotificationContent(notification: NotificationWithDates) {
   switch (notification.type) {
     case "NEW_PENDING_REQUEST":
       return {
-        title: "Nová žiadosť na schválenie",
+        title:
+          payload.requestKind === "CANCELLATION"
+            ? "Nová žiadosť o zrušenie"
+            : payload.requestKind === "CHANGE"
+              ? "Nová žiadosť o úpravu"
+              : "Nová žiadosť na schválenie",
         text: `${payload.userName ?? payload.userId ?? "Neznámy používateľ"} • ${range}`,
       };
     case "REQUEST_APPROVED":
-      return { title: "Žiadosť schválená", text: range };
+      return {
+        title:
+          payload.requestKind === "CANCELLATION"
+            ? "Zrušenie dovolenky schválené"
+            : payload.requestKind === "CHANGE"
+              ? "Úprava dovolenky schválená"
+              : "Žiadosť schválená",
+        text: range,
+      };
+    case "REQUEST_APPROVED_FOR_REVIEWERS":
+      return {
+        title: "Žiadosť bola schválená",
+        text: `${payload.userName ?? payload.userId ?? "Neznámy používateľ"} • ${range}`,
+      };
     case "REQUEST_REJECTED":
-      return { title: "Žiadosť zamietnutá", text: range };
+      return {
+        title:
+          payload.requestKind === "CANCELLATION"
+            ? "Zrušenie dovolenky zamietnuté"
+            : payload.requestKind === "CHANGE"
+              ? "Úprava dovolenky zamietnutá"
+              : "Žiadosť zamietnutá",
+        text: range,
+      };
+    case "REQUEST_REJECTED_FOR_REVIEWERS":
+      return {
+        title: "Žiadosť bola zamietnutá",
+        text: `${payload.userName ?? payload.userId ?? "Neznámy používateľ"} • ${range}`,
+      };
     case "REQUEST_UPDATED_BY_MANAGER":
       return {
         title: "Žiadosť upravená manažérom",

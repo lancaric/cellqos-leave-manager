@@ -27,14 +27,22 @@ export default function TeamPage() {
 
   const visibleTeams = useMemo(() => {
     const teams = teamsData?.teams || [];
-    if (isManager) {
+    if (user?.role === "ADMIN") {
       return teams;
     }
-    if (!meData?.teamId) {
+    const visibleTeamIds = new Set<number>(
+      ((meData?.visibleTeamIds as number[] | undefined) ?? []).filter(
+        (value): value is number => typeof value === "number" && Number.isFinite(value)
+      )
+    );
+    if (isManager) {
+      return teams.filter((team) => visibleTeamIds.has(team.id));
+    }
+    if (visibleTeamIds.size === 0) {
       return [];
     }
-    return teams.filter((team) => team.id === meData.teamId);
-  }, [isManager, meData?.teamId, teamsData?.teams]);
+    return teams.filter((team) => visibleTeamIds.has(team.id));
+  }, [isManager, meData?.visibleTeamIds, teamsData?.teams, user?.role]);
 
   useEffect(() => {
     if (isManager) {

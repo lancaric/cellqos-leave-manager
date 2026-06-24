@@ -20,7 +20,7 @@ export const approve = api<ApproveLeaveRequestParams, LeaveRequest>(
     const isAdminUser = isAdmin(auth.role);
     const isManagerUser = isManager(auth.role);
     requireManager(auth.role);
-    const request = await db.queryRow<LeaveRequest & { teamId: number | null }>`
+    const request = await db.queryRow<LeaveRequest & { teamId: number | null; userName: string | null }>`
       SELECT 
         lr.id, lr.user_id as "userId", lr.type,
         lr.start_date::date::text as "startDate",
@@ -36,7 +36,8 @@ export const approve = api<ApproveLeaveRequestParams, LeaveRequest>(
         lr.attachment_url as "attachmentUrl",
         lr.created_at as "createdAt",
         lr.updated_at as "updatedAt",
-        u.team_id as "teamId"
+        u.team_id as "teamId",
+        u.name as "userName"
       FROM leave_requests lr
       JOIN users u ON lr.user_id = u.id
       WHERE lr.id = ${id}
@@ -138,22 +139,83 @@ export const approve = api<ApproveLeaveRequestParams, LeaveRequest>(
       updated
     );
     
-    await createNotification(
-      request.userId,
-      "REQUEST_APPROVED",
-      {
-        requestId: id,
-        type: updated?.type,
-        startDate: updated?.startDate,
-        endDate: updated?.endDate,
-        startTime: updated?.startTime,
-        endTime: updated?.endTime,
-        status: updated?.status,
-        computedHours: updated?.computedHours,
-        managerComment: updated?.managerComment,
-      },
-      `leave_request:${id}:approved`
+    const notificationPayload = {
+      requestId: id,
+      userId: request.userId,
+      userName: request.userName,
+      type: updated?.type,
+      startDate: updated?.startDate,
+      endDate: updated?.endDate,
+      startTime: updated?.startTime,
+      endTime: updated?.endTime,
+      status: updated?.status,
+      computedHours: updated?.computedHours,
+      managerComment: updated?.managerComment,
+      approvedBy: approverId,
+      approverName: auth.name,
+      approverEmail: auth.email,
+    };
+
+    const notificationJobs: Promise<unknown>[] = [];
+    notificationJobs.push(
+      createNotification(
+        request.userId,
+        "REQUEST_APPROVED",
+        notificationPayload,
+        `leave_request:${id}:approved:requester`
+      )
     );
+
+    const managers = request.teamId
+      ? await db.queryAll<{ id: string }>`
+          SELECT id
+          FROM users
+          WHERE role = 'MANAGER'
+            AND is_active = true
+            AND team_id = ${request.teamId}
+        `
+      : await db.queryAll<{ id: string }>`
+          SELECT id
+          FROM users
+          WHERE role = 'MANAGER'
+            AND is_active = true
+        `;
+
+    for (const manager of managers) {
+      notificationJobs.push(
+        createNotification(
+          manager.id,
+          "REQUEST_APPROVED_FOR_REVIEWERS",
+          notificationPayload,
+          `leave_request:${id}:approved:${manager.id}`
+        )
+      );
+    }
+
+    const admins = await db.queryAll<{ id: string }>`
+      SELECT id
+      FROM users
+      WHERE role = 'ADMIN'
+        AND is_active = true
+    `;
+
+    for (const admin of admins) {
+      notificationJobs.push(
+        createNotification(
+          admin.id,
+          "REQUEST_APPROVED_FOR_REVIEWERS",
+          notificationPayload,
+          `leave_request:${id}:approved:${admin.id}`
+        )
+      );
+    }
+
+    void Promise.allSettled(notificationJobs).then((results) => {
+      const failedCount = results.filter((result) => result.status === "rejected").length;
+      if (failedCount > 0) {
+        console.warn(`Leave request ${id}: ${failedCount} approval notification(s) failed`);
+      }
+    });
     
     return updated!;
   }

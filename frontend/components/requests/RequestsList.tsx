@@ -25,6 +25,11 @@ export default function RequestsList({ requests, isLoading, onUpdate, showUser }
     CANCELLED: "bg-gray-400",
   };
 
+  const requestKindLabels = {
+    CHANGE: "Úprava schválenej dovolenky",
+    CANCELLATION: "Zrušenie schválenej dovolenky",
+  };
+
   const statusLabels = {
     DRAFT: "Návrh",
     PENDING: "Čaká",
@@ -64,6 +69,11 @@ export default function RequestsList({ requests, isLoading, onUpdate, showUser }
                   <h3 className="font-semibold">
                     {typeLabels[request.type as keyof typeof typeLabels]}
                   </h3>
+                  {request.requestKind && request.requestKind !== "STANDARD" && (
+                    <Badge variant="outline">
+                      {requestKindLabels[request.requestKind as keyof typeof requestKindLabels] ?? request.requestKind}
+                    </Badge>
+                  )}
                   <Badge className={statusColors[request.status as keyof typeof statusColors]}>
                     {statusLabels[request.status as keyof typeof statusLabels] ?? request.status}
                   </Badge>

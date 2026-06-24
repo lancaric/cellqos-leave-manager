@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -26,6 +27,7 @@ import {
 type TeamFormValues = {
   name: string;
   maxConcurrentLeaves: string;
+  visibleToTeamIds: string[];
 };
 
 export default function TeamManagement() {
@@ -38,15 +40,16 @@ export default function TeamManagement() {
     queryKey: ["teams"],
     queryFn: async () => backend.teams.list(),
   });
-  const { register, handleSubmit, reset } = useForm<TeamFormValues>({
+  const { register, handleSubmit, reset, watch, setValue } = useForm<TeamFormValues>({
     defaultValues: {
       name: "",
       maxConcurrentLeaves: "",
+      visibleToTeamIds: [],
     },
   });
 
   const createMutation = useMutation({
-    mutationFn: async (payload: { name: string; maxConcurrentLeaves?: number | null }) =>
+    mutationFn: async (payload: { name: string; maxConcurrentLeaves?: number | null; visibleToTeamIds?: number[] }) =>
       backend.teams.create(payload),
     onSuccess: () => {
       toast({ title: "Tím bol vytvorený." });
@@ -102,7 +105,7 @@ export default function TeamManagement() {
 
   const openCreate = () => {
     setEditingTeam(null);
-    reset({ name: "", maxConcurrentLeaves: "" });
+    reset({ name: "", maxConcurrentLeaves: "", visibleToTeamIds: [] });
     setDialogOpen(true);
   };
 
@@ -111,8 +114,25 @@ export default function TeamManagement() {
     reset({
       name: team.name ?? "",
       maxConcurrentLeaves: team.maxConcurrentLeaves ? String(team.maxConcurrentLeaves) : "",
+      visibleToTeamIds: Array.isArray(team.visibleToTeamIds)
+        ? team.visibleToTeamIds.map((id: number | string) => String(id))
+        : [],
     });
     setDialogOpen(true);
+  };
+
+  const toggleVisibleTeam = (teamId: string, checked: boolean | "indeterminate") => {
+    const current = watch("visibleToTeamIds") || [];
+    if (checked) {
+      if (!current.includes(teamId)) {
+        setValue("visibleToTeamIds", [...current, teamId]);
+      }
+      return;
+    }
+    setValue(
+      "visibleToTeamIds",
+      current.filter((value) => value !== teamId)
+    );
   };
 
   const handleDelete = (team: any) => {
@@ -123,9 +143,14 @@ export default function TeamManagement() {
   };
 
   const onSubmit = (values: TeamFormValues) => {
+    const parsedVisibleToTeamIds = (values.visibleToTeamIds || [])
+      .map((value) => Number(value))
+      .filter((value) => Number.isFinite(value));
+
     const payload = {
       name: values.name.trim(),
       maxConcurrentLeaves: values.maxConcurrentLeaves ? Number(values.maxConcurrentLeaves) : null,
+      visibleToTeamIds: parsedVisibleToTeamIds,
     };
 
     if (editingTeam) {
@@ -210,6 +235,36 @@ export default function TeamManagement() {
                 {...register("maxConcurrentLeaves")}
                 placeholder="Neobmedzené"
               />
+            </div>
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label>Viditeľné tímy pre zamestnancov</Label>
+                <p className="text-sm text-muted-foreground">
+                  Vybrané tímy sa budú medzi sebou navzájom vidieť v prehľadoch a kalendári.
+                </p>
+              </div>
+              <div className="space-y-2 rounded-md border p-3">
+                {teams
+                  .filter((team) => !editingTeam || team.id !== editingTeam.id)
+                  .map((team) => {
+                    const teamId = String(team.id);
+                    const isChecked = (watch("visibleToTeamIds") || []).includes(teamId);
+                    return (
+                      <label key={team.id} className="flex items-center gap-3 text-sm">
+                        <Checkbox
+                          checked={isChecked}
+                          onCheckedChange={(checked) => toggleVisibleTeam(teamId, checked)}
+                        />
+                        <span>{team.name}</span>
+                      </label>
+                    );
+                  })}
+                {teams.filter((team) => !editingTeam || team.id !== editingTeam.id).length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    Najprv vytvorte aspoň jeden ďalší tím.
+                  </p>
+                ) : null}
+              </div>
             </div>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>

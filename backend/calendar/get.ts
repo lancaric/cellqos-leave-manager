@@ -20,6 +20,33 @@ interface GetCalendarResponse {
   events: CalendarEvent[];
 }
 
+async function getManagedTeamIds(userId: string): Promise<number[]> {
+  const rows: Array<{ teamId: number }> = [];
+  try {
+    for await (const row of db.query<{
+      teamId: number;
+    }>`
+      SELECT team_id as "teamId"
+      FROM manager_teams
+      WHERE manager_user_id = ${userId}
+    `) {
+      rows.push(row);
+    }
+  } catch {
+    return [];
+  }
+
+  return Array.from(new Set(rows.map((row) => Number(row.teamId)).filter((id) => Number.isFinite(id))));
+}
+
+function mergeVisibleTeamIds(ownTeamId: number | null, managedTeamIds: number[]): number[] {
+  return Array.from(
+    new Set(
+      [ownTeamId, ...managedTeamIds].filter((value): value is number => Number.isFinite(value) && value !== null)
+    )
+  );
+}
+
 // Gets calendar view with all leave requests in date range
 export const get = api(
   { auth: true, expose: true, method: "GET", path: "/calendar" },
@@ -29,6 +56,7 @@ export const get = api(
     const isManagerUser = isManager(auth.role);
     const viewerId = auth.userID;
     let viewerTeamId: number | null = null;
+    let visibleTeamIds: number[] = [];
     let showTeamCalendarForEmployees = false;
     try {
       const settings = await db.queryRow<{ showTeamCalendarForEmployees: boolean }>`
@@ -55,6 +83,13 @@ export const get = api(
       viewerTeamId = viewer.teamId;
     }
 
+    if (isManagerUser && !isAdminUser) {
+      const managedTeamIds = await getManagedTeamIds(viewerId);
+      visibleTeamIds = mergeVisibleTeamIds(viewerTeamId, managedTeamIds);
+    } else if (!isAdminUser && viewerTeamId !== null) {
+      visibleTeamIds = [viewerTeamId];
+    }
+
     const conditions: string[] = [
       "lr.start_date <= $2",
       "lr.end_date >= $1",
@@ -64,11 +99,27 @@ export const get = api(
     const values: any[] = [params.startDate, params.endDate];
 
     if ((isManagerUser || isAdminUser) && params.teamId) {
+      if (isManagerUser && !isAdminUser && !visibleTeamIds.includes(params.teamId)) {
+        throw APIError.permissionDenied("Cannot access another team's calendar");
+      }
       conditions.push(`u.team_id = $${values.length + 1}`);
       values.push(params.teamId);
     }
 
+    if (isManagerUser && !isAdminUser && !params.teamId) {
+      if (visibleTeamIds.length > 0) {
+        conditions.push(`u.team_id = ANY($${values.length + 1}::bigint[])`);
+        values.push(visibleTeamIds);
+      } else {
+        conditions.push(`lr.user_id = $${values.length + 1}`);
+        values.push(viewerId);
+      }
+    }
+
     if (!isManagerUser && !isAdminUser) {
+      if (params.teamId && params.teamId !== viewerTeamId) {
+        throw APIError.permissionDenied("Cannot access another team's calendar");
+      }
       if (showTeamCalendarForEmployees && viewerTeamId) {
         conditions.push(`u.team_id = $${values.length + 1}`);
         values.push(viewerTeamId);
@@ -106,7 +157,9 @@ export const get = api(
     const events: CalendarEvent[] = [];
     for await (const row of db.rawQuery<CalendarEvent>(query, ...values)) {
       if (!isAdminUser && row.userId !== viewerId) {
-        const isSameTeam = viewerTeamId !== null && viewerTeamId === row.teamId;
+        const isSameTeam = isManagerUser
+          ? visibleTeamIds.includes(Number(row.teamId))
+          : viewerTeamId !== null && viewerTeamId === row.teamId;
         if (!isManagerUser || !isSameTeam) {
           row.reason = null;
           row.managerComment = null;
