@@ -5,7 +5,8 @@ import StatsFilters, { type StatsFilterState } from "@/components/stats/StatsFil
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useBackend } from "@/lib/backend";
-import { apiBaseUrl, useAuth } from "@/lib/auth";
+import { useAuth } from "@/lib/auth";
+import { apiFetch } from "@/lib/apiClient";
 import { buildStatsQuery } from "@/lib/stats";
 import type { StatsExportFormat, StatsReportType } from "~backend/shared/types";
 
@@ -102,17 +103,7 @@ export default function StatsExportPage() {
     }
 
     try {
-      const response = await fetch(`${apiBaseUrl}${job.downloadUrl}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.message || "Sťahovanie exportu zlyhalo.");
-      }
-
+      const response = await apiFetch(job.downloadUrl, { token });
       const contentDisposition = response.headers.get("Content-Disposition") ?? "";
       const match = /filename="?([^"]+)"?/i.exec(contentDisposition);
       const fallbackName = `stats-export-${job.id}.${job.format.toLowerCase()}`;

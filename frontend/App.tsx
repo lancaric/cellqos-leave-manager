@@ -1,6 +1,6 @@
-import type { ReactElement } from "react";
+import { useEffect, useRef, type ReactElement } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import Navigation from "./components/layout/Navigation";
 import CalendarPage from "./pages/CalendarPage";
@@ -32,6 +32,7 @@ export default function App() {
   return (
     <AuthProvider>
       <QueryClientProvider client={queryClient}>
+        <AuthSessionSync />
         <BrowserRouter>
           <div className="min-h-screen overflow-x-hidden bg-background">
             <Navigation />
@@ -135,6 +136,21 @@ export default function App() {
       </QueryClientProvider>
     </AuthProvider>
   );
+}
+
+function AuthSessionSync() {
+  const { token } = useAuth();
+  const queryClient = useQueryClient();
+  const previousTokenRef = useRef<string | null>(token);
+
+  useEffect(() => {
+    if (previousTokenRef.current && previousTokenRef.current !== token) {
+      queryClient.clear();
+    }
+    previousTokenRef.current = token;
+  }, [queryClient, token]);
+
+  return null;
 }
 
 function RequireAuth({ children }: { children: ReactElement }) {

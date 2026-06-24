@@ -1,4 +1,4 @@
-import { apiBaseUrl } from "@/lib/auth";
+import { apiBaseUrl, notifyUnauthorizedSession } from "@/lib/auth";
 import type {
   LeaveStatus,
   LeaveType,
@@ -15,12 +15,27 @@ interface RequestOptions {
   method?: string;
   body?: unknown;
   token?: string | null;
+  headers?: Record<string, string>;
 }
 
-async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+export async function apiFetch(path: string, options: RequestOptions = {}): Promise<Response> {
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    ...options.headers,
   };
+
+  if (options.body !== undefined && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
 
   if (options.token) {
     headers.Authorization = `Bearer ${options.token}`;
@@ -34,8 +49,17 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
 
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.message || "API request failed");
+    if (response.status === 401 && options.token) {
+      notifyUnauthorizedSession();
+    }
+    throw new ApiError(response.status, payload.message || "API request failed");
   }
+
+  return response;
+}
+
+async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const response = await apiFetch(path, options);
 
   return (await response.json()) as T;
 }

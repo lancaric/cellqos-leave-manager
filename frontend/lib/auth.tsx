@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useMemo, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { UserRole } from "~backend/shared/types";
 
 interface AuthUser {
@@ -26,6 +26,7 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 const storageKey = "cellqos.auth";
+const unauthorizedEventName = "cellqos:unauthorized";
 
 function readStoredSession(): AuthSession | null {
   if (typeof window === "undefined") return null;
@@ -50,6 +51,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       window.localStorage.removeItem(storageKey);
     }
   };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const handleUnauthorized = () => {
+      setSessionState(null);
+      window.localStorage.removeItem(storageKey);
+    };
+
+    window.addEventListener(unauthorizedEventName, handleUnauthorized);
+    return () => window.removeEventListener(unauthorizedEventName, handleUnauthorized);
+  }, []);
 
   const logout = () => setSession(null);
 
@@ -77,6 +90,11 @@ export function useAuth() {
 
 export function requiresOnboarding(user: AuthUser | null): boolean {
   return Boolean(user && user.role !== "ADMIN" && user.profileCompleted !== true);
+}
+
+export function notifyUnauthorizedSession() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(unauthorizedEventName));
 }
 
 function normalizeApiBaseUrl(value: string): string {
