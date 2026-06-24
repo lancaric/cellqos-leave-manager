@@ -14,9 +14,41 @@ type NotificationWithDates = Notification & {
   payloadJson: any;
 };
 
+function getRequestKindLabel(payload: any): string {
+  if (payload.requestKind === "CHANGE") return "Úprava schválenej dovolenky";
+  if (payload.requestKind === "CANCELLATION") return "Zrušenie schválenej dovolenky";
+  return "Nová žiadosť";
+}
+
+function getSourceRange(payload: any): string | null {
+  if (!payload.sourceStartDate || !payload.sourceEndDate) {
+    return null;
+  }
+
+  return formatRequestRange({
+    startDate: payload.sourceStartDate,
+    endDate: payload.sourceEndDate,
+    startTime: payload.sourceStartTime,
+    endTime: payload.sourceEndTime,
+  });
+}
+
+function buildNotificationText(payload: any): string {
+  const range = formatRequestRange(payload) || "?";
+  const kindLabel = getRequestKindLabel(payload);
+  const sourceRange = getSourceRange(payload);
+
+  if (payload.requestKind === "CHANGE" && sourceRange) {
+    return `${kindLabel} • z ${sourceRange} na ${range}`;
+  }
+
+  return `${kindLabel} • ${range}`;
+}
+
 function getNotificationContent(notification: NotificationWithDates) {
   const payload = notification.payloadJson ?? {};
-  const range = formatRequestRange(payload) || "?";
+  const actor = payload.userName ?? payload.userId ?? "Neznámy používateľ";
+  const detailedText = buildNotificationText(payload);
 
   switch (notification.type) {
     case "NEW_PENDING_REQUEST":
@@ -27,47 +59,37 @@ function getNotificationContent(notification: NotificationWithDates) {
             : payload.requestKind === "CHANGE"
               ? "Nová žiadosť o úpravu"
               : "Nová žiadosť na schválenie",
-        text: `${payload.userName ?? payload.userId ?? "Neznámy používateľ"} • ${range}`,
+        text: `${actor} • ${detailedText}`,
       };
     case "REQUEST_APPROVED":
       return {
-        title:
-          payload.requestKind === "CANCELLATION"
-            ? "Zrušenie dovolenky schválené"
-            : payload.requestKind === "CHANGE"
-              ? "Úprava dovolenky schválená"
-              : "Žiadosť schválená",
-        text: range,
+        title: "Žiadosť schválená",
+        text: detailedText,
       };
     case "REQUEST_APPROVED_FOR_REVIEWERS":
       return {
         title: "Žiadosť bola schválená",
-        text: `${payload.userName ?? payload.userId ?? "Neznámy používateľ"} • ${range}`,
+        text: `${actor} • ${detailedText}`,
       };
     case "REQUEST_REJECTED":
       return {
-        title:
-          payload.requestKind === "CANCELLATION"
-            ? "Zrušenie dovolenky zamietnuté"
-            : payload.requestKind === "CHANGE"
-              ? "Úprava dovolenky zamietnutá"
-              : "Žiadosť zamietnutá",
-        text: range,
+        title: "Žiadosť zamietnutá",
+        text: detailedText,
       };
     case "REQUEST_REJECTED_FOR_REVIEWERS":
       return {
         title: "Žiadosť bola zamietnutá",
-        text: `${payload.userName ?? payload.userId ?? "Neznámy používateľ"} • ${range}`,
+        text: `${actor} • ${detailedText}`,
       };
     case "REQUEST_UPDATED_BY_MANAGER":
       return {
         title: "Žiadosť upravená manažérom",
-        text: `Stav: ${payload.status ?? "nezmenený"} • ${range}`,
+        text: `Stav: ${payload.status ?? "nezmenený"} • ${detailedText}`,
       };
     case "REQUEST_CANCELLED":
       return {
         title: "Žiadosť zrušená",
-        text: `${payload.userName ?? payload.userId ?? "Neznámy používateľ"} • ${range}`,
+        text: `${actor} • ${detailedText}`,
       };
     case "PASSWORD_RESET":
       return {

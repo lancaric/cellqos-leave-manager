@@ -19,7 +19,13 @@ const leaveStatusLabels: Record<string, string> = {
   CANCELLED: "Zrušené",
 };
 
-function formatDateTime(date?: string, time?: string): string {
+const requestKindLabels: Record<string, string> = {
+  STANDARD: "Nová žiadosť",
+  CHANGE: "Úprava schválenej dovolenky",
+  CANCELLATION: "Zrušenie schválenej dovolenky",
+};
+
+function formatDateTime(date?: string | null, time?: string | null): string {
   if (!date) {
     return "?";
   }
@@ -29,32 +35,55 @@ function formatDateTime(date?: string, time?: string): string {
   return `${date} ${time}`;
 }
 
-function formatTimeRange(startTime?: string | null, endTime?: string | null): string | null {
-  if (!startTime && !endTime) {
+function buildRangeLabel(payload: {
+  startDate?: string | null;
+  endDate?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+}): string {
+  return `${formatDateTime(payload.startDate, payload.startTime)} -> ${formatDateTime(payload.endDate, payload.endTime)}`;
+}
+
+function buildRequestKindLine(payload: any): string {
+  const requestKind = payload.requestKind ?? "STANDARD";
+  return `Typ požiadavky: ${requestKindLabels[requestKind] ?? requestKind}`;
+}
+
+function buildChangeLine(payload: any): string | null {
+  if (payload.requestKind !== "CHANGE" || !payload.sourceStartDate || !payload.sourceEndDate) {
     return null;
   }
-  return `${startTime ?? "?"} – ${endTime ?? "?"}`;
+
+  const sourceRange = buildRangeLabel({
+    startDate: payload.sourceStartDate,
+    endDate: payload.sourceEndDate,
+    startTime: payload.sourceStartTime,
+    endTime: payload.sourceEndTime,
+  });
+  const targetRange = buildRangeLabel({
+    startDate: payload.startDate,
+    endDate: payload.endDate,
+    startTime: payload.startTime,
+    endTime: payload.endTime,
+  });
+
+  return `Mení sa z: ${sourceRange} na: ${targetRange}`;
 }
 
 function buildLeaveRequestDetails(payload: any): string[] {
   const startDateTime = formatDateTime(payload.startDate, payload.startTime);
   const endDateTime = formatDateTime(payload.endDate, payload.endTime);
-  const timeRange = formatTimeRange(payload.startTime, payload.endTime);
   const typeLabel = payload.type ? leaveTypeLabels[payload.type] ?? payload.type : null;
   const statusLabel = payload.status ? leaveStatusLabels[payload.status] ?? payload.status : null;
 
   const lines = [
-    payload.requestKind === "CANCELLATION" ? "Typ požiadavky: Zrušenie schválenej dovolenky" : null,
-    payload.requestKind === "CHANGE" ? "Typ požiadavky: Úprava schválenej dovolenky" : null,
-    `Typ: ${typeLabel ?? "?"}`,
+    buildRequestKindLine(payload),
+    buildChangeLine(payload),
+    `Typ voľna: ${typeLabel ?? "?"}`,
     `Stav: ${statusLabel ?? "?"}`,
     `Začiatok: ${startDateTime}`,
     `Koniec: ${endDateTime}`,
   ].filter((line): line is string => Boolean(line));
-
-  if (timeRange) {
-    lines.push(`Čas: ${timeRange}`);
-  }
 
   if (payload.computedHours !== undefined && payload.computedHours !== null) {
     lines.push(`Trvanie: ${payload.computedHours} hodín`);
@@ -77,15 +106,41 @@ function buildLeaveRequestDetails(payload: any): string[] {
   return lines;
 }
 
+function buildActionText(type: string, payload: any): string {
+  const requestKind = payload.requestKind ?? "STANDARD";
+
+  if (type === "REQUEST_APPROVED") {
+    if (requestKind === "CHANGE") return "Vaša žiadosť o úpravu schválenej dovolenky bola schválená.";
+    if (requestKind === "CANCELLATION") return "Vaša žiadosť o zrušenie schválenej dovolenky bola schválená.";
+    return "Vaša žiadosť bola schválená.";
+  }
+
+  if (type === "REQUEST_REJECTED") {
+    if (requestKind === "CHANGE") return "Vaša žiadosť o úpravu schválenej dovolenky bola zamietnutá.";
+    if (requestKind === "CANCELLATION") return "Vaša žiadosť o zrušenie schválenej dovolenky bola zamietnutá.";
+    return "Vaša žiadosť bola zamietnutá.";
+  }
+
+  if (type === "REQUEST_APPROVED_FOR_REVIEWERS") {
+    return "Jedna žiadosť bola schválená.";
+  }
+
+  if (type === "REQUEST_REJECTED_FOR_REVIEWERS") {
+    return "Jedna žiadosť bola zamietnutá.";
+  }
+
+  return "Máte nové upozornenie.";
+}
+
 export function buildNotificationEmail(type: string, payload: any): NotificationEmailContent {
   const safePayload = payload ?? {};
 
   switch (type) {
     case "REQUEST_SUBMITTED":
       return {
-        subject: "Ziadost bola odoslana",
+        subject: "Žiadosť bola odoslaná",
         text: [
-          "Vasa ziadost o dovolenku bola odoslana na schvalenie.",
+          "Vaša žiadosť o dovolenku bola odoslaná na schválenie.",
           ...buildLeaveRequestDetails(safePayload),
         ].join("\n"),
       };
@@ -104,42 +159,22 @@ export function buildNotificationEmail(type: string, payload: any): Notification
     case "REQUEST_APPROVED":
       return {
         subject: "Žiadosť schválená",
-        text: [
-          safePayload.requestKind === "CANCELLATION"
-            ? "Vaša žiadosť o zrušenie schválenej dovolenky bola schválená."
-            : safePayload.requestKind === "CHANGE"
-              ? "Vaša žiadosť o úpravu schválenej dovolenky bola schválená."
-              : "Vaša žiadosť bola schválená.",
-          ...buildLeaveRequestDetails(safePayload),
-        ].join("\n"),
+        text: [buildActionText(type, safePayload), ...buildLeaveRequestDetails(safePayload)].join("\n"),
       };
     case "REQUEST_REJECTED":
       return {
         subject: "Žiadosť zamietnutá",
-        text: [
-          safePayload.requestKind === "CANCELLATION"
-            ? "Vaša žiadosť o zrušenie schválenej dovolenky bola zamietnutá."
-            : safePayload.requestKind === "CHANGE"
-              ? "Vaša žiadosť o úpravu schválenej dovolenky bola zamietnutá."
-              : "Vaša žiadosť bola zamietnutá.",
-          ...buildLeaveRequestDetails(safePayload),
-        ].join("\n"),
+        text: [buildActionText(type, safePayload), ...buildLeaveRequestDetails(safePayload)].join("\n"),
       };
     case "REQUEST_APPROVED_FOR_REVIEWERS":
       return {
-        subject: "Ziadost bola schvalena",
-        text: [
-          "Jedna ziadost bola schvalena.",
-          ...buildLeaveRequestDetails(safePayload),
-        ].join("\n"),
+        subject: "Žiadosť bola schválená",
+        text: [buildActionText(type, safePayload), ...buildLeaveRequestDetails(safePayload)].join("\n"),
       };
     case "REQUEST_REJECTED_FOR_REVIEWERS":
       return {
-        subject: "Ziadost bola zamietnuta",
-        text: [
-          "Jedna ziadost bola zamietnuta.",
-          ...buildLeaveRequestDetails(safePayload),
-        ].join("\n"),
+        subject: "Žiadosť bola zamietnutá",
+        text: [buildActionText(type, safePayload), ...buildLeaveRequestDetails(safePayload)].join("\n"),
       };
     case "REQUEST_UPDATED_BY_MANAGER":
       return {
@@ -152,10 +187,7 @@ export function buildNotificationEmail(type: string, payload: any): Notification
     case "REQUEST_CANCELLED":
       return {
         subject: "Žiadosť zrušená",
-        text: [
-          "Žiadosť bola zrušená.",
-          ...buildLeaveRequestDetails(safePayload),
-        ].join("\n"),
+        text: ["Žiadosť bola zrušená.", ...buildLeaveRequestDetails(safePayload)].join("\n"),
       };
     case "PASSWORD_RESET":
       return {

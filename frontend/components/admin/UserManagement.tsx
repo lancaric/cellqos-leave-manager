@@ -287,11 +287,9 @@ export default function UserManagement() {
       .filter((id) => Number.isFinite(id));
 
     const resolvedTeamId =
-      values.role === "ADMIN"
-        ? null
-        : values.teamId !== "none"
-          ? Number(values.teamId)
-          : null;
+      values.teamId !== "none"
+        ? Number(values.teamId)
+        : null;
 
     const parsedWorkingHoursPerDay = Number(values.workingHoursPerDay);
     if (!Number.isFinite(parsedWorkingHoursPerDay) || parsedWorkingHoursPerDay <= 0) {
@@ -401,7 +399,7 @@ export default function UserManagement() {
                   )
                   .map((team: any) => team.name)
               : [];
-            const teamName = teams.find((team: any) => team.id === user.teamId)?.name;
+            const teamName = teams.find((team: any) => String(team.id) === String(user.teamId))?.name;
             const teamLabel =
               user.role === "MANAGER"
                 ? managedTeamNames.length > 0
@@ -496,7 +494,6 @@ export default function UserManagement() {
                   onValueChange={(value) => {
                     setValue("role", value as UserFormValues["role"]);
                     if (value === "ADMIN") {
-                      setValue("teamId", "none");
                       setValue("managedTeamIds", []);
                     }
                     if (value === "EMPLOYEE") {
@@ -520,7 +517,6 @@ export default function UserManagement() {
                 <Select
                   value={watch("teamId")}
                   onValueChange={(value) => setValue("teamId", value)}
-                  disabled={watch("role") === "ADMIN"}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Bez tímu" />

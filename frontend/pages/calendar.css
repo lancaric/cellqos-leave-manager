@@ -37,6 +37,12 @@
   color: white;
 }
 
+.calendar-container .rbc-event.source-preview-event {
+  background-color: rgba(251, 191, 36, 0.18);
+  color: rgb(146 64 14);
+  border: 1px dashed rgb(245 158 11);
+}
+
 .calendar-container .month-date-header {
   display: flex;
   align-items: center;

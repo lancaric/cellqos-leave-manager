@@ -148,6 +148,7 @@ export default function CalendarPage() {
 
   const events: CalendarEvent[] = (data?.events || []).map((event) => {
     const kind = event.kind ?? "LEAVE";
+    const requestKind = event.requestKind ?? "STANDARD";
 
     if (kind === "BIRTHDAY") {
       const title = `Narodeniny: ${event.userName}${typeof event.age === "number" ? ` (${event.age})` : ""}`;
@@ -171,15 +172,46 @@ export default function CalendarPage() {
 
     return {
       id: event.id,
-      title: `${event.userName} - ${
-        typeLabels[event.type as keyof typeof typeLabels] ?? event.type.replace("_", " ")
-      }`,
+      title:
+        requestKind === "CHANGE"
+          ? `Úprava: ${event.userName} - ${typeLabels[event.type as keyof typeof typeLabels] ?? event.type.replace("_", " ")}`
+          : requestKind === "CANCELLATION"
+            ? `Zrušenie: ${event.userName} - ${typeLabels[event.type as keyof typeof typeLabels] ?? event.type.replace("_", " ")}`
+            : `${event.userName} - ${typeLabels[event.type as keyof typeof typeLabels] ?? event.type.replace("_", " ")}`,
       start,
       end,
       allDay: !hasTimeRange,
       resource: { ...event, kind },
     };
   });
+
+  const sourcePreviewEvents: CalendarEvent[] = (data?.events || [])
+    .filter((event) =>
+      (event.requestKind === "CHANGE" || event.requestKind === "CANCELLATION")
+      && event.sourceStartDate
+      && event.sourceEndDate
+    )
+    .map((event) => {
+      const hasTimeRange = Boolean(event.sourceStartTime || event.sourceEndTime);
+      const start = hasTimeRange
+        ? buildEventDateTime(event.sourceStartDate, event.sourceStartTime, "00:00:00")
+        : moment(event.sourceStartDate).startOf("day").toDate();
+      const end = hasTimeRange
+        ? buildEventDateTime(event.sourceEndDate, event.sourceEndTime, "23:59:59")
+        : moment(event.sourceEndDate).startOf("day").add(1, "day").toDate();
+
+      return {
+        id: `source-${event.id}`,
+        title:
+          event.requestKind === "CANCELLATION"
+            ? `Pôvodne schválené: ${event.userName} - ${typeLabels[(event.sourceType ?? event.type) as keyof typeof typeLabels] ?? event.type.replace("_", " ")}`
+            : `Pôvodne: ${event.userName} - ${typeLabels[(event.sourceType ?? event.type) as keyof typeof typeLabels] ?? event.type.replace("_", " ")}`,
+        start,
+        end,
+        allDay: !hasTimeRange,
+        resource: { ...event, kind: "LEAVE_SOURCE_PREVIEW", linkedRequest: event },
+      };
+    });
 
   const holidayEvents: CalendarEvent[] = (holidayData?.holidays || []).map((holiday) => ({
     id: `holiday-${holiday.id}`,
@@ -190,7 +222,7 @@ export default function CalendarPage() {
     resource: { ...holiday, kind: "HOLIDAY" },
   }));
 
-  const calendarEvents = [...events, ...holidayEvents];
+  const calendarEvents = [...sourcePreviewEvents, ...events, ...holidayEvents];
 
   const eventStyleGetter = (event: CalendarEvent) => {
     if (event.resource?.kind === "HOLIDAY") {
@@ -199,6 +231,10 @@ export default function CalendarPage() {
 
     if (event.resource?.kind === "BIRTHDAY") {
       return { className: "birthday-event" };
+    }
+
+    if (event.resource?.kind === "LEAVE_SOURCE_PREVIEW") {
+      return { className: "source-preview-event" };
     }
 
     const status = event.resource.status;
@@ -381,7 +417,7 @@ export default function CalendarPage() {
                if (event.resource?.kind === "HOLIDAY" || event.resource?.kind === "BIRTHDAY") {
                  return;
                }
-               setSelectedEvent(event.resource);
+               setSelectedEvent(event.resource?.kind === "LEAVE_SOURCE_PREVIEW" ? event.resource.linkedRequest : event.resource);
              }}
              selectable
              onSelectSlot={handleSelectSlot}

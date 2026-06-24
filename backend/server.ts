@@ -2670,7 +2670,7 @@ app.post("/users", asyncHandler(async (req, res) => {
 
   const userId = randomUUID();
   const userRole: UserRole = role ?? "EMPLOYEE";
-  const resolvedTeamId = userRole === "ADMIN" ? null : teamId ?? null;
+  const resolvedTeamId = teamId ?? null;
   const resolvedWorkingHoursPerDay = workingHoursPerDay ?? HOURS_PER_WORKDAY;
   const defaultPassword = "Password123!";
   const passwordRow = await queryRow<{ hash: string }>(
@@ -2857,9 +2857,7 @@ app.patch("/users/:id", asyncHandler(async (req, res) => {
     updates.push(`role = $${values.length + 1}`);
     values.push(role);
   }
-  if (role === "ADMIN") {
-    updates.push("team_id = NULL");
-  } else if (teamId !== undefined) {
+  if (teamId !== undefined) {
     updates.push(`team_id = $${values.length + 1}`);
     values.push(teamId ?? null);
   }
@@ -4386,13 +4384,43 @@ app.post("/leave-requests/:id/approve", asyncHandler(async (req, res) => {
   }
 
   const client = await pool.connect();
+  let sourceRequestDetails: {
+    id: number;
+    userId: string;
+    status: LeaveStatus;
+    type: LeaveType;
+    startDate: string;
+    endDate: string;
+    startTime: string | null;
+    endTime: string | null;
+    computedHours: number;
+  } | null = null;
   try {
     await client.query("BEGIN");
 
     if (request.sourceRequestId) {
-      const sourceRequest = await client.query<{ id: number; userId: string; status: LeaveStatus }>(
+      const sourceRequest = await client.query<{
+        id: number;
+        userId: string;
+        status: LeaveStatus;
+        type: LeaveType;
+        startDate: string;
+        endDate: string;
+        startTime: string | null;
+        endTime: string | null;
+        computedHours: number;
+      }>(
         `
-          SELECT id, user_id as "userId", status
+          SELECT
+            id,
+            user_id as "userId",
+            status,
+            type,
+            start_date::date::text as "startDate",
+            end_date::date::text as "endDate",
+            start_time::text as "startTime",
+            end_time::text as "endTime",
+            computed_hours as "computedHours"
           FROM leave_requests
           WHERE id = $1
           FOR UPDATE
@@ -4403,6 +4431,7 @@ app.post("/leave-requests/:id/approve", asyncHandler(async (req, res) => {
       if (!sourceRow || sourceRow.userId !== request.userId || sourceRow.status !== "APPROVED") {
         throw new HttpError(409, "Original approved request for this change is no longer available");
       }
+      sourceRequestDetails = sourceRow;
 
       if (requestKind === "CANCELLATION") {
         await client.query(
@@ -4524,8 +4553,8 @@ app.post("/leave-requests/:id/approve", asyncHandler(async (req, res) => {
 
   const notificationPayload = {
     requestId: id,
-    sourceRequestId: updated?.sourceRequestId,
-    requestKind: updated?.requestKind ?? requestKind,
+    sourceRequestId: request.sourceRequestId ?? updated?.sourceRequestId,
+    requestKind,
     userId: request.userId,
     userName: requester?.name ?? null,
     type: updated?.type,
@@ -4535,6 +4564,13 @@ app.post("/leave-requests/:id/approve", asyncHandler(async (req, res) => {
     endTime: updated?.endTime,
     status: updated?.status,
     computedHours: updated?.computedHours,
+    sourceType: sourceRequestDetails?.type ?? null,
+    sourceStatus: sourceRequestDetails?.status ?? null,
+    sourceStartDate: sourceRequestDetails?.startDate ?? null,
+    sourceEndDate: sourceRequestDetails?.endDate ?? null,
+    sourceStartTime: sourceRequestDetails?.startTime ?? null,
+    sourceEndTime: sourceRequestDetails?.endTime ?? null,
+    sourceComputedHours: sourceRequestDetails?.computedHours ?? null,
     managerComment: updated?.managerComment,
     approvedBy: auth.userID,
     approverName: auth.name,
@@ -4673,6 +4709,32 @@ app.post("/leave-requests/:id/reject", asyncHandler(async (req, res) => {
     [request.userId]
   );
 
+  const sourceRequestDetails = request.sourceRequestId
+    ? await queryRow<{
+        type: LeaveType;
+        status: LeaveStatus;
+        startDate: string;
+        endDate: string;
+        startTime: string | null;
+        endTime: string | null;
+        computedHours: number;
+      }>(
+        `
+          SELECT
+            type,
+            status,
+            start_date::date::text as "startDate",
+            end_date::date::text as "endDate",
+            start_time::text as "startTime",
+            end_time::text as "endTime",
+            computed_hours as "computedHours"
+          FROM leave_requests
+          WHERE id = $1
+        `,
+        [request.sourceRequestId]
+      )
+    : null;
+
   const notificationPayload = {
     requestId: id,
     sourceRequestId: updated?.sourceRequestId,
@@ -4686,6 +4748,13 @@ app.post("/leave-requests/:id/reject", asyncHandler(async (req, res) => {
     endTime: updated?.endTime,
     status: updated?.status,
     computedHours: updated?.computedHours,
+    sourceType: sourceRequestDetails?.type ?? null,
+    sourceStatus: sourceRequestDetails?.status ?? null,
+    sourceStartDate: sourceRequestDetails?.startDate ?? null,
+    sourceEndDate: sourceRequestDetails?.endDate ?? null,
+    sourceStartTime: sourceRequestDetails?.startTime ?? null,
+    sourceEndTime: sourceRequestDetails?.endTime ?? null,
+    sourceComputedHours: sourceRequestDetails?.computedHours ?? null,
     managerComment: updated?.managerComment,
     approvedBy: auth.userID,
     approverName: auth.name,
@@ -4978,7 +5047,6 @@ app.get("/calendar", asyncHandler(async (req, res) => {
     "lr.end_date >= $1",
     "lr.status != 'DRAFT'",
     "lr.status != 'REJECTED'",
-    "(lr.request_kind IS NULL OR lr.request_kind != 'CANCELLATION')",
     `
       NOT EXISTS (
         SELECT 1
@@ -5022,6 +5090,15 @@ app.get("/calendar", asyncHandler(async (req, res) => {
   const query = `
       SELECT 
         lr.id, lr.user_id as "userId", lr.type,
+        lr.source_request_id as "sourceRequestId",
+        lr.request_kind as "requestKind",
+        src.type as "sourceType",
+        src.status as "sourceStatus",
+        src.start_date::date::text as "sourceStartDate",
+        src.end_date::date::text as "sourceEndDate",
+        src.start_time::text as "sourceStartTime",
+        src.end_time::text as "sourceEndTime",
+        src.computed_hours as "sourceComputedHours",
         lr.start_date::date::text as "startDate",
         lr.end_date::date::text as "endDate",
         lr.start_time::text as "startTime",
@@ -5040,6 +5117,7 @@ app.get("/calendar", asyncHandler(async (req, res) => {
         u.team_id as "teamId"
       FROM leave_requests lr
       JOIN users u ON lr.user_id = u.id
+      LEFT JOIN leave_requests src ON src.id = lr.source_request_id
       WHERE ${conditions.join(" AND ")}
       ORDER BY lr.start_date ASC
     `;
