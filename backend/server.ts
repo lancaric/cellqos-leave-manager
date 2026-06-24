@@ -1447,6 +1447,7 @@ async function buildMonthlyLeaveReportExport(
       LEFT JOIN teams t ON t.id = u.team_id
       WHERE u.id = ANY($1::text[])
         AND u.is_active = true
+        AND u.team_id IS NOT NULL
       ORDER BY u.name ASC
     `,
     [userIds, HOURS_PER_WORKDAY]
