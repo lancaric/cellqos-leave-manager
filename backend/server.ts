@@ -6131,11 +6131,8 @@ app.get("/audit", asyncHandler(async (req, res) => {
 
 app.get("/notifications", asyncHandler(async (req, res) => {
   const auth = requireAuth(req.auth ?? null);
-  const isAdminUser = isAdmin(auth.role);
   const supportsDedupeKey = await hasNotificationsDedupeKey();
   const dedupeSelect = supportsDedupeKey ? `, dedupe_key as "dedupeKey"` : "";
-  const whereClause = isAdminUser ? "" : "WHERE user_id = $1";
-  const params = isAdminUser ? [] : [auth.userID];
   const notifications = await queryRows<Notification>(
     `
       SELECT 
@@ -6148,11 +6145,11 @@ app.get("/notifications", asyncHandler(async (req, res) => {
         created_at as "createdAt"
         ${dedupeSelect}
       FROM notifications
-      ${whereClause}
+      WHERE user_id = $1
       ORDER BY (read_at IS NULL) DESC, created_at DESC
       LIMIT 50
     `,
-    params
+    [auth.userID]
   );
 
   res.json({ notifications });

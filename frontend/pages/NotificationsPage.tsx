@@ -51,6 +51,11 @@ function getNotificationContent(notification: NotificationWithDates) {
   const detailedText = buildNotificationText(payload);
 
   switch (notification.type) {
+    case "REQUEST_SUBMITTED":
+      return {
+        title: "Žiadosť bola odoslaná",
+        text: detailedText,
+      };
     case "NEW_PENDING_REQUEST":
       return {
         title:
