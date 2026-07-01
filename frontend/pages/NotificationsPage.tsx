@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+﻿import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useBackend } from "@/lib/backend";
 import { useToast } from "@/components/ui/use-toast";
@@ -104,7 +104,13 @@ function getNotificationContent(notification: NotificationWithDates) {
         }`,
       };
     default:
-      return { title: "Notifikácia", text: JSON.stringify(payload) };
+      return {
+        title: "Notifikácia",
+        text:
+          payload.requestKind || payload.startDate || payload.endDate || payload.type
+            ? detailedText
+            : "Máte nové upozornenie.",
+      };
   }
 }
 
@@ -158,7 +164,7 @@ export default function NotificationsPage() {
     },
     onError: (error: any) => {
       toast({
-        title: "Vymazanie notifikácie zlyhalo",
+        title: "Vymazanie notifikÃ¡cie zlyhalo",
         description: error.message,
         variant: "destructive",
       });
@@ -292,3 +298,4 @@ export default function NotificationsPage() {
     </div>
   );
 }
+

@@ -1,4 +1,4 @@
-export interface NotificationEmailContent {
+﻿export interface NotificationEmailContent {
   subject: string;
   text: string;
 }
@@ -132,6 +132,40 @@ function buildActionText(type: string, payload: any): string {
   return "Máte nové upozornenie.";
 }
 
+function buildGenericNotificationDetails(payload: any): string[] {
+  const lines: string[] = [];
+
+  if (payload.userName || payload.userId) {
+    lines.push(`Používateľ: ${payload.userName ?? payload.userId}`);
+  }
+
+  if (payload.requestKind) {
+    lines.push(buildRequestKindLine(payload));
+  }
+
+  if (payload.type) {
+    lines.push(`Typ voľna: ${leaveTypeLabels[payload.type] ?? payload.type}`);
+  }
+
+  if (payload.status) {
+    lines.push(`Stav: ${leaveStatusLabels[payload.status] ?? payload.status}`);
+  }
+
+  if (payload.startDate || payload.endDate) {
+    lines.push(`Termín: ${buildRangeLabel(payload)}`);
+  }
+
+  if (payload.computedHours !== undefined && payload.computedHours !== null) {
+    lines.push(`Trvanie: ${payload.computedHours} hodín`);
+  }
+
+  if (payload.managerComment) {
+    lines.push(`Komentár manažéra: ${payload.managerComment}`);
+  }
+
+  return lines;
+}
+
 export function buildNotificationEmail(type: string, payload: any): NotificationEmailContent {
   const safePayload = payload ?? {};
 
@@ -196,10 +230,13 @@ export function buildNotificationEmail(type: string, payload: any): Notification
           safePayload.adminEmail ? ` (${safePayload.adminEmail})` : ""
         }.`,
       };
-    default:
+    default: {
+      const details = buildGenericNotificationDetails(safePayload);
       return {
         subject: "Notifikácia",
-        text: `Máte nové upozornenie.\n\nDetaily:\n${JSON.stringify(safePayload, null, 2)}`,
+        text: ["Máte nové upozornenie.", ...details].join("\n"),
       };
+    }
   }
 }
+
