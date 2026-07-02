@@ -4,6 +4,7 @@ import { Calendar as BigCalendar, momentLocalizer } from "react-big-calendar";
 import moment from "moment";
 import "moment/locale/sk";
 import { useBackend } from "@/lib/backend";
+import { useAuth } from "@/lib/auth";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
@@ -44,6 +45,7 @@ type CalendarView = "month" | "week" | "work_week" | "day" | "agenda";
 
 export default function CalendarPage() {
   const backend = useBackend();
+  const { user } = useAuth();
   const [date, setDate] = useState(new Date());
   const [view, setView] = useState<CalendarView>("month");
   const [isMobile, setIsMobile] = useState(false);
@@ -170,14 +172,17 @@ export default function CalendarPage() {
       ? buildEventDateTime(event.endDate, event.endTime, "23:59:59")
       : moment(event.endDate).startOf("day").add(1, "day").toDate();
 
+    const isOwnEvent = event.userId === user?.id;
+    const ownerLabel = isOwnEvent ? " " : "";
+
     return {
       id: event.id,
       title:
         requestKind === "CHANGE"
-          ? `Úprava: ${event.userName} - ${typeLabels[event.type as keyof typeof typeLabels] ?? event.type.replace("_", " ")}`
+          ? `${ownerLabel}Úprava: ${event.userName} - ${typeLabels[event.type as keyof typeof typeLabels] ?? event.type.replace("_", " ")}`
           : requestKind === "CANCELLATION"
-            ? `Zrušenie: ${event.userName} - ${typeLabels[event.type as keyof typeof typeLabels] ?? event.type.replace("_", " ")}`
-            : `${event.userName} - ${typeLabels[event.type as keyof typeof typeLabels] ?? event.type.replace("_", " ")}`,
+            ? `${ownerLabel}Zrušenie: ${event.userName} - ${typeLabels[event.type as keyof typeof typeLabels] ?? event.type.replace("_", " ")}`
+            : `${ownerLabel}${event.userName} - ${typeLabels[event.type as keyof typeof typeLabels] ?? event.type.replace("_", " ")}`,
       start,
       end,
       allDay: !hasTimeRange,
@@ -225,6 +230,9 @@ export default function CalendarPage() {
   const calendarEvents = [...sourcePreviewEvents, ...events, ...holidayEvents];
 
   const eventStyleGetter = (event: CalendarEvent) => {
+    const isOwnLeave = event.resource?.userId === user?.id;
+    const ownLeaveClass = isOwnLeave ? " own-leave-event" : "";
+
     if (event.resource?.kind === "HOLIDAY") {
       return { className: "holiday-event" };
     }
@@ -234,7 +242,7 @@ export default function CalendarPage() {
     }
 
     if (event.resource?.kind === "LEAVE_SOURCE_PREVIEW") {
-      return { className: "source-preview-event" };
+      return { className: `source-preview-event${ownLeaveClass}` };
     }
 
     const status = event.resource.status;
@@ -246,7 +254,7 @@ export default function CalendarPage() {
     };
 
     return {
-      className: colors[status as keyof typeof colors] || "bg-blue-500",
+      className: `${colors[status as keyof typeof colors] || "bg-blue-500"}${ownLeaveClass}`,
     };
   };
 
@@ -379,6 +387,11 @@ export default function CalendarPage() {
       ) : null}
 
       <Card className="p-2 sm:p-6">
+        <div className="mb-3 flex justify-end">
+          <Badge variant="outline" className="border-primary bg-primary/10 text-primary">
+            MOJE = moja žiadosť
+          </Badge>
+        </div>
         <div className={`calendar-container${expandedMonthDate && view === "month" ? " calendar-container--month-expanded" : ""}`}>
 <BigCalendar
              localizer={localizer}

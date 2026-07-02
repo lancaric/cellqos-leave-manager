@@ -6,6 +6,7 @@ import { formatLeaveHours } from "@/lib/leaveFormat";
 import { formatRequestRange } from "@/lib/requestDateTime";
 import { Eye } from "lucide-react";
 import RequestDetailDialog from "./RequestDetailDialog";
+import { useAuth } from "@/lib/auth";
 
 interface RequestsListProps {
   requests: any[];
@@ -15,6 +16,7 @@ interface RequestsListProps {
 }
 
 export default function RequestsList({ requests, isLoading, onUpdate, showUser }: RequestsListProps) {
+  const { user } = useAuth();
   const [selectedRequest, setSelectedRequest] = useState<any>(null);
 
   const statusColors = {
@@ -61,8 +63,14 @@ export default function RequestsList({ requests, isLoading, onUpdate, showUser }
   return (
     <>
       <div className="space-y-4">
-        {requests.map((request) => (
-          <Card key={request.id} className="p-4 sm:p-6">
+        {requests.map((request) => {
+          const isOwnRequest = request.userId === user?.id;
+
+          return (
+          <Card
+            key={request.id}
+            className={`p-4 sm:p-6 ${showUser && isOwnRequest ? "border-2 border-primary bg-primary/5 shadow-md" : ""}`}
+          >
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex-1 space-y-2">
                 <div className="flex flex-wrap items-center gap-3">
@@ -79,6 +87,11 @@ export default function RequestsList({ requests, isLoading, onUpdate, showUser }
                   </Badge>
                   {showUser && request.userName && (
                     <span className="text-sm text-muted-foreground">{request.userName}</span>
+                  )}
+                  {showUser && isOwnRequest && (
+                    <Badge variant="outline" className="border-primary bg-primary/10 text-primary">
+                      Moja žiadosť
+                    </Badge>
                   )}
                 </div>
 
@@ -102,7 +115,8 @@ export default function RequestsList({ requests, isLoading, onUpdate, showUser }
               </Button>
             </div>
           </Card>
-        ))}
+          );
+        })}
       </div>
 
       {selectedRequest && (

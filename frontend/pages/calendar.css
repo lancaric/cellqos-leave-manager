@@ -43,6 +43,19 @@
   border: 1px dashed rgb(245 158 11);
 }
 
+.calendar-container .rbc-event.own-leave-event {
+  border: 2px solid black;
+  box-shadow:
+    0 0 0 2px hsl(var(--primary)),
+    0 2px 6px rgb(0 0 0 / 0.28);
+  font-weight: 700;
+  z-index: 2;
+}
+
+.calendar-container .rbc-event.source-preview-event.own-leave-event {
+  border-style: dashed;
+}
+
 .calendar-container .month-date-header {
   display: flex;
   align-items: center;

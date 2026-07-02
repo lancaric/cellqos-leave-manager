@@ -71,6 +71,11 @@ export default function RequestDetailDialog({ request, open, onClose }: RequestD
   const canApproveRequest = Boolean(
     request.status === "PENDING" && !isOwnRequest && canManageOtherUsersRequest
   );
+  const canCancelRequest = Boolean(
+    user?.role === "ADMIN"
+      || (user?.role === "EMPLOYEE" && isOwnRequest)
+      || (user?.role === "MANAGER" && (isOwnRequest || canManageOtherUsersRequest))
+  );
   const requestKind = request.requestKind ?? "STANDARD";
   const isApprovedOwnRequest = isOwnRequest && request.status === "APPROVED";
   const isPendingDerivedRequest = request.status === "PENDING" && Boolean(request.sourceRequestId);
@@ -471,7 +476,7 @@ export default function RequestDetailDialog({ request, open, onClose }: RequestD
                 Odoslat na schvalenie
               </Button>
             )}
-            {(request.status === "DRAFT" || request.status === "PENDING") && (
+            {canCancelRequest && (request.status === "DRAFT" || request.status === "PENDING") && (
               <Button size="sm" variant="destructive" onClick={() => cancelMutation.mutate()}>
                 {isPendingDerivedRequest ? "Stiahnuť požiadavku" : "Zrusit ziadost"}
               </Button>
