@@ -93,6 +93,11 @@ type LdapDirectoryUser = {
   displayName: string;
 };
 
+type PythonCommand = {
+  bin: string;
+  args: string[];
+};
+
 declare global {
   namespace Express {
     interface Request {
@@ -112,6 +117,80 @@ function isLeapYear(year: number) {
 
 function pad2(value: number) {
   return String(value).padStart(2, "0");
+}
+
+function buildPythonCommandCandidates(): PythonCommand[] {
+  const candidates: PythonCommand[] = [];
+  const seen = new Set<string>();
+  const configured = process.env.PYTHON_BIN?.trim();
+
+  const addCandidate = (bin: string, args: string[] = []) => {
+    const trimmed = bin.trim();
+    if (!trimmed) {
+      return;
+    }
+    const key = `${trimmed}\u0000${args.join("\u0000")}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    candidates.push({ bin: trimmed, args });
+  };
+
+  if (configured) {
+    addCandidate(configured);
+  }
+
+  addCandidate("python");
+  addCandidate("py", ["-3"]);
+  addCandidate("python3");
+  return candidates;
+}
+
+function isPythonInterpreterMissingError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const err = error as Error & { code?: string; stderr?: string };
+  const message = `${error.message}\n${typeof err.stderr === "string" ? err.stderr : ""}`.toLowerCase();
+
+  return err.code === "ENOENT"
+    || message.includes("python sa nena")
+    || message.includes("python was not found")
+    || message.includes("is not recognized as an internal or external command")
+    || message.includes("nie je rozpoznan")
+    || message.includes("'python' is not recognized")
+    || message.includes("'py' is not recognized");
+}
+
+async function runPythonScriptWithFallback(scriptArgs: string[], options: {
+  cwd: string;
+  maxBuffer: number;
+}) {
+  const candidates = buildPythonCommandCandidates();
+  let lastError: unknown;
+
+  for (const candidate of candidates) {
+    try {
+      await execFileAsync(candidate.bin, [...candidate.args, ...scriptArgs], options);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isPythonInterpreterMissingError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  if (isPythonInterpreterMissingError(lastError)) {
+    throw new HttpError(
+      500,
+      "Monthly leave export requires Python 3. Install Python (or Python Launcher `py`) and make it available in PATH."
+    );
+  }
+
+  throw (lastError ?? new Error("Unknown Python execution error"));
 }
 
 function getLocalDateParts(date = new Date(), timeZone = scheduledEmailTimeZone): LocalDateParts {
@@ -1571,12 +1650,10 @@ async function buildMonthlyLeaveReportExport(
   const outputPath = path.join(tempDir, outputFilename);
   const scriptPath = path.join(exportAssetsDir, "generate_export.py");
   const logoPath = path.join(exportAssetsDir, "output-onlinepngtools.png");
-  const pythonBin = process.env.PYTHON_BIN || "python";
 
   try {
     await fs.promises.writeFile(inputPath, `${csvContent}\n`, "utf-8");
-    await execFileAsync(
-      pythonBin,
+    await runPythonScriptWithFallback(
       [
         scriptPath,
         "--input",
@@ -1606,6 +1683,9 @@ async function buildMonthlyLeaveReportExport(
       year,
     };
   } catch (error) {
+    if (error instanceof HttpError) {
+      throw error;
+    }
     const message = error instanceof Error ? error.message : "Unknown export error";
     throw new HttpError(500, `Monthly leave export generation failed: ${message}`);
   } finally {
