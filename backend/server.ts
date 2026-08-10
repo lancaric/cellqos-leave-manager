@@ -199,16 +199,20 @@ function getLocalDateParts(date = new Date(), timeZone = scheduledEmailTimeZone)
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
   });
   const parts = formatter.formatToParts(date);
   const year = Number(parts.find((part) => part.type === "year")?.value);
   const month = Number(parts.find((part) => part.type === "month")?.value);
   const day = Number(parts.find((part) => part.type === "day")?.value);
+  const hour = Number(parts.find((part) => part.type === "hour")?.value);
 
   return {
     year,
     month,
     day,
+    hour,
     isoDate: `${year}-${pad2(month)}-${pad2(day)}`,
   };
 }
@@ -239,6 +243,7 @@ function buildLocalDateParts(year: number, month: number, day: number): LocalDat
     year,
     month,
     day,
+    hour: 0,
     isoDate: `${year}-${pad2(month)}-${pad2(day)}`,
   };
 }
@@ -1059,6 +1064,7 @@ type LocalDateParts = {
   year: number;
   month: number;
   day: number;
+  hour: number;
   isoDate: string;
 };
 
@@ -1915,7 +1921,7 @@ async function runScheduledEmailTick(): Promise<void> {
     const dateParts = getLocalDateParts();
     const daysInMonth = getDaysInMonth(dateParts.year, dateParts.month);
 
-    if (dateParts.day === daysInMonth - 1) {
+    if (dateParts.day === daysInMonth - 1 && dateParts.hour >= 8) {
       const claimed = await claimScheduledEmailDispatch("MONTHLY_REMINDER", dateParts.isoDate);
       if (claimed) {
         try {
