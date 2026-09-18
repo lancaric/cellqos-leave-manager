@@ -15,6 +15,7 @@ import OnboardingPage from "./pages/OnboardingPage";
 import StatsDashboardPage from "./pages/StatsDashboardPage";
 import StatsCalendarPage from "./pages/StatsCalendarPage";
 import StatsExportPage from "./pages/StatsExportPage";
+import InternsPage from "./pages/InternsPage";
 import { AuthProvider, requiresOnboarding, useAuth } from "@/lib/auth";
 import { useBackend } from "@/lib/backend";
 import type { UserRole } from "~backend/shared/types";
@@ -52,16 +53,16 @@ export default function App() {
                   path="/calendar"
                   element={
                     <RequireCompletedProfile>
-                      <CalendarPage />
+                      <CalendarLanding />
                     </RequireCompletedProfile>
                   }
                 />
                 <Route
                   path="/my-requests"
                   element={
-                    <RequireCompletedProfile>
+                    <RequireRole roles={["EMPLOYEE", "MANAGER", "ADMIN"]}>
                       <MyRequestsPage />
-                    </RequireCompletedProfile>
+                    </RequireRole>
                   }
                 />
                 <Route
@@ -83,19 +84,20 @@ export default function App() {
                 <Route
                   path="/notifications"
                   element={
-                    <RequireCompletedProfile>
+                    <RequireRole roles={["EMPLOYEE", "MANAGER", "ADMIN"]}>
                       <NotificationsPage />
-                    </RequireCompletedProfile>
+                    </RequireRole>
                   }
                 />
                 <Route
                   path="/profile"
                   element={
-                    <RequireCompletedProfile>
+                    <RequireRole roles={["EMPLOYEE", "MANAGER", "ADMIN"]}>
                       <ProfilePage />
-                    </RequireCompletedProfile>
+                    </RequireRole>
                   }
                 />
+                <Route path="/interns" element={<RequireAuth><InternsPage /></RequireAuth>} />
                 <Route
                   path="/admin"
                   element={
@@ -136,6 +138,11 @@ export default function App() {
       </QueryClientProvider>
     </AuthProvider>
   );
+}
+
+function CalendarLanding() {
+  const { user } = useAuth();
+  return user?.role === "INTERN" ? <InternsPage /> : <CalendarPage />;
 }
 
 function AuthSessionSync() {

@@ -44,6 +44,7 @@ import type {
   StatsReportType,
 } from "./shared/types";
 import { HttpError } from "./shared/http-error";
+import { authenticateIntern, ensureInternSchema, registerInternRoutes } from "./interns";
 
 const app = express();
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -2299,6 +2300,9 @@ type DatabaseBackup = {
     settings: Record<string, unknown>[];
     audit_logs: Record<string, unknown>[];
     notifications: Record<string, unknown>[];
+    intern_groups?: Record<string, unknown>[];
+    interns?: Record<string, unknown>[];
+    intern_attendance?: Record<string, unknown>[];
   };
 };
 
@@ -2363,6 +2367,13 @@ app.post("/auth/login", asyncHandler(async (req, res) => {
     });
 
     res.json({ token, user: localUser });
+    return;
+  }
+
+  const intern = await authenticateIntern(pool, identifier, password);
+  if (intern) {
+    const token = signAuthToken({ sub: intern.id, email: intern.email, role: "INTERN", name: intern.name });
+    res.json({ token, user: intern });
     return;
   }
 
@@ -2454,6 +2465,15 @@ app.post("/auth/change-password", asyncHandler(async (req, res) => {
 
 app.get("/users/me", asyncHandler(async (req, res) => {
   const auth = requireAuth(req.auth ?? null);
+  if (auth.role === "INTERN") {
+    const intern = await queryRow<Record<string, unknown>>(
+      `SELECT id,email,name,'INTERN'::text as role,true as "profileCompleted",true as "onboardingCompleted",is_active as "isActive"
+       FROM interns WHERE id=$1`, [auth.userID]
+    );
+    if (!intern) throw new HttpError(404, "Intern not found");
+    res.json(intern);
+    return;
+  }
   const columnSupport = await getUserColumnSupport();
 
   const user = await queryRow<User>(
@@ -6461,10 +6481,13 @@ app.get("/admin/database/export", asyncHandler(async (req, res) => {
     settings: await queryRows<Record<string, unknown>>("SELECT * FROM settings ORDER BY id ASC"),
     audit_logs: await queryRows<Record<string, unknown>>("SELECT * FROM audit_logs ORDER BY id ASC"),
     notifications: await queryRows<Record<string, unknown>>("SELECT * FROM notifications ORDER BY id ASC"),
+    intern_groups: await queryRows<Record<string, unknown>>("SELECT * FROM intern_groups ORDER BY id ASC"),
+    interns: await queryRows<Record<string, unknown>>("SELECT * FROM interns ORDER BY id ASC"),
+    intern_attendance: await queryRows<Record<string, unknown>>("SELECT * FROM intern_attendance ORDER BY id ASC"),
   };
 
   const backup: DatabaseBackup = {
-    version: 2,
+    version: 3,
     exportedAt: new Date().toISOString(),
     tables,
   };
@@ -6493,7 +6516,7 @@ app.post("/admin/database/import", asyncHandler(async (req, res) => {
     throw new HttpError(400, "Backup payload is required.");
   }
 
-  if (backup.version !== 1 && backup.version !== 2) {
+  if (backup.version !== 1 && backup.version !== 2 && backup.version !== 3) {
     throw new HttpError(400, "Unsupported backup version.");
   }
 
@@ -6521,12 +6544,15 @@ app.post("/admin/database/import", asyncHandler(async (req, res) => {
   try {
     await client.query("BEGIN");
     await client.query(
-      "TRUNCATE team_visibility, teams, users, leave_requests, holidays, leave_balances, settings, audit_logs, notifications RESTART IDENTITY CASCADE"
+      "TRUNCATE intern_attendance, interns, intern_groups, team_visibility, teams, users, leave_requests, holidays, leave_balances, settings, audit_logs, notifications RESTART IDENTITY CASCADE"
     );
 
     await insertRows(client, "teams", backup.tables.teams);
     await insertRows(client, "team_visibility", Array.isArray(backup.tables.team_visibility) ? backup.tables.team_visibility : []);
     await insertRows(client, "users", backup.tables.users);
+    await insertRows(client, "intern_groups", Array.isArray(backup.tables.intern_groups) ? backup.tables.intern_groups : []);
+    await insertRows(client, "interns", Array.isArray(backup.tables.interns) ? backup.tables.interns : []);
+    await insertRows(client, "intern_attendance", Array.isArray(backup.tables.intern_attendance) ? backup.tables.intern_attendance : []);
     await insertRows(client, "holidays", backup.tables.holidays);
     await insertRows(client, "leave_balances", backup.tables.leave_balances);
     await insertRows(client, "leave_requests", backup.tables.leave_requests);
@@ -6540,6 +6566,8 @@ app.post("/admin/database/import", asyncHandler(async (req, res) => {
     await resetSerialSequence(client, "leave_balances", "id");
     await resetSerialSequence(client, "audit_logs", "id");
     await resetSerialSequence(client, "notifications", "id");
+    await resetSerialSequence(client, "intern_groups", "id");
+    await resetSerialSequence(client, "intern_attendance", "id");
 
     await client.query(
       `
@@ -6567,6 +6595,8 @@ app.post("/admin/database/import", asyncHandler(async (req, res) => {
 
   res.json({ ok: true });
 }));
+
+registerInternRoutes(app, pool, exportAssetsDir);
 
 app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof HttpError) {
@@ -6601,6 +6631,7 @@ const port = Number(process.env.PORT ?? 4000);
 
 async function startServer() {
   await pool.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto";');
+  await ensureInternSchema(pool);
   await hasManagerTeamsTable();
   await hasTeamVisibilityTable();
   await pool.query(`

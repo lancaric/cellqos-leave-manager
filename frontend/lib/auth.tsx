@@ -89,7 +89,7 @@ export function useAuth() {
 }
 
 export function requiresOnboarding(user: AuthUser | null): boolean {
-  return Boolean(user && user.role !== "ADMIN" && user.profileCompleted !== true);
+  return Boolean(user && user.role !== "ADMIN" && user.role !== "INTERN" && user.profileCompleted !== true);
 }
 
 export function notifyUnauthorizedSession() {

@@ -37,8 +37,8 @@ export function buildStatsDateRange({
     if (month < 1 || month > 12) {
       throw new Error("Invalid month");
     }
-    const start = new Date(year, month - 1, 1);
-    const end = new Date(year, month, 0);
+    const start = new Date(Date.UTC(year, month - 1, 1));
+    const end = new Date(Date.UTC(year, month, 0));
     return {
       startDate: start.toISOString().slice(0, 10),
       endDate: end.toISOString().slice(0, 10),
@@ -52,8 +52,8 @@ export function buildStatsDateRange({
     }
     const startMonth = (quarter - 1) * 3 + 1;
     const endMonth = startMonth + 2;
-    const start = new Date(year, startMonth - 1, 1);
-    const end = new Date(year, endMonth, 0);
+    const start = new Date(Date.UTC(year, startMonth - 1, 1));
+    const end = new Date(Date.UTC(year, endMonth, 0));
     return {
       startDate: start.toISOString().slice(0, 10),
       endDate: end.toISOString().slice(0, 10),
@@ -61,8 +61,8 @@ export function buildStatsDateRange({
     };
   }
 
-  const start = new Date(year, 0, 1);
-  const end = new Date(year, 12, 0);
+  const start = new Date(Date.UTC(year, 0, 1));
+  const end = new Date(Date.UTC(year, 12, 0));
   return {
     startDate: start.toISOString().slice(0, 10),
     endDate: end.toISOString().slice(0, 10),

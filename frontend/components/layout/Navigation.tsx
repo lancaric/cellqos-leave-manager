@@ -9,6 +9,7 @@ import {
   CheckSquare,
   Settings,
   BarChart3,
+  ClipboardCheck,
   Menu,
   X,
 } from "lucide-react";
@@ -26,14 +27,21 @@ export default function Navigation() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navItems = [
-    { path: "/calendar", label: "Kalendár", icon: Calendar, roles: ["EMPLOYEE", "MANAGER", "ADMIN"] },
+    { path: "/calendar", label: userRole === "INTERN" ? "Moja dochádzka" : "Kalendár", icon: Calendar, roles: ["EMPLOYEE", "MANAGER", "ADMIN", "INTERN"] },
     { path: "/my-requests", label: "Moje žiadosti", icon: FileText, roles: ["EMPLOYEE", "MANAGER", "ADMIN"] },
     { path: "/notifications", label: "Notifikácie", icon: Bell, roles: ["EMPLOYEE", "MANAGER", "ADMIN"] },
     { path: "/team", label: "Tím", icon: Users, roles: ["EMPLOYEE", "MANAGER", "ADMIN"] },
     { path: "/approvals", label: "Schvaľovanie", icon: CheckSquare, roles: ["MANAGER", "ADMIN"] },
     { path: "/stats", label: "Štatistiky", icon: BarChart3, roles: ["MANAGER", "ADMIN"] },
     { path: "/admin", label: "Administrácia", icon: Settings, roles: ["ADMIN"] },
+    { path: "/interns", label: "Praktikanti", icon: ClipboardCheck, roles: ["EMPLOYEE", "MANAGER", "ADMIN"] },
   ];
+
+  const assignedInternsQuery = useQuery({
+    queryKey: ["interns", "navigation"],
+    enabled: Boolean(user && user.role !== "INTERN" && user.role !== "ADMIN"),
+    queryFn: () => backend.interns.list(),
+  });
 
   const notificationsQuery = useQuery({
     queryKey: ["notifications"],
@@ -45,9 +53,9 @@ export default function Navigation() {
   });
 
   const unreadCount = notificationsQuery.data?.filter((notification) => !notification.readAt).length ?? 0;
-  const visibleItems = user ? navItems.filter((item) => item.roles.includes(userRole)) : [];
+  const visibleItems = user ? navItems.filter((item) => item.roles.includes(userRole) && (item.path !== "/interns" || userRole === "ADMIN" || (assignedInternsQuery.data?.interns.length ?? 0) > 0)) : [];
   const profileLabel = user
-    ? `${user.name} (${user.role === "ADMIN" ? "Admin" : user.role === "MANAGER" ? "Manažér" : "Zamestnanec"})`
+    ? `${user.name} (${user.role === "ADMIN" ? "Admin" : user.role === "MANAGER" ? "Manažér" : user.role === "INTERN" ? "Praktikant" : "Zamestnanec"})`
     : null;
 
   useEffect(() => {

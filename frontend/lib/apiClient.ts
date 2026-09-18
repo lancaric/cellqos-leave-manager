@@ -185,6 +185,31 @@ export function createApiClient(token: string | null) {
         apiRequest<{ ok: true }>(`/notifications/${data.id}`, { method: "DELETE", token }),
       removeAll: () => apiRequest<{ ok: true }>("/notifications", { method: "DELETE", token }),
     },
+    interns: {
+      me: () => apiRequest<any>("/interns/me", { token }),
+      list: () => apiRequest<{ interns: any[] }>("/interns", { token }),
+      employees: () => apiRequest<{ employees: any[] }>("/interns/employees", { token }),
+      create: (data: any) => apiRequest<any>("/interns", { method: "POST", body: data, token }),
+      update: (data: { id: string } & Record<string, unknown>) =>
+        apiRequest<any>(`/interns/${data.id}`, { method: "PATCH", body: data, token }),
+      groups: {
+        list: () => apiRequest<{ groups: any[] }>("/intern-groups", { token }),
+        create: (data: any) => apiRequest<any>("/intern-groups", { method: "POST", body: data, token }),
+        update: (data: { id: number } & Record<string, unknown>) =>
+          apiRequest<any>(`/intern-groups/${data.id}`, { method: "PATCH", body: data, token }),
+        remove: (id: number) => apiRequest<any>(`/intern-groups/${id}`, { method: "DELETE", token }),
+      },
+      attendance: (params: { from: string; to: string; internId?: string; groupId?: number }) =>
+        apiRequest<{ records: any[] }>(`/intern-attendance${toQuery(params)}`, { token }),
+      record: (internId: string, date: string, data: { status: string; reason?: string; confirmInternReason?: boolean }) =>
+        apiRequest<any>(`/intern-attendance/${internId}/${date}`, { method: "PUT", body: data, token }),
+      absence: (date: string, reason: string) =>
+        apiRequest<any>(`/intern-attendance/${date}/absence`, { method: "POST", body: { reason }, token }),
+      exportPdf: async (params: { from: string; to: string; internId?: string; groupId?: number }) => {
+        const response = await apiFetch(`/intern-attendance/export${toQuery(params)}`, { token });
+        return response.blob();
+      },
+    },
     database: {
       export: () => apiRequest<any>("/admin/database/export", { token }),
       import: (payload: { backup: any; confirm: string }) =>

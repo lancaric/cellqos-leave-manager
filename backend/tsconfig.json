@@ -26,5 +26,5 @@
 		"forceConsistentCasingInFileNames": true,
 		"skipLibCheck": true
 	},
-	"include": ["server.ts", "db/**/*.ts", "shared/**/*.ts", "shared/**/*.d.ts"]
+	"include": ["server.ts", "interns.ts", "db/**/*.ts", "shared/**/*.ts", "shared/**/*.d.ts"]
 }

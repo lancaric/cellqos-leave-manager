@@ -15,6 +15,60 @@ enum UserRole {
   @@map("user_role")
 }
 
+model InternGroup {
+  id                    BigInt   @id @default(autoincrement())
+  name                  String   @unique
+  startDate             DateTime @map("start_date") @db.Date
+  endDate               DateTime @map("end_date") @db.Date
+  weekdays              Int[]
+  weekInterval          Int      @default(1) @map("week_interval")
+  supervisorUserId      String   @map("supervisor_user_id")
+  substituteUserId      String?  @map("substitute_user_id")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+  interns               Intern[]
+
+  @@map("intern_groups")
+}
+
+model Intern {
+  id                    String   @id
+  email                 String   @unique
+  name                  String
+  passwordHash          String   @map("password_hash")
+  isActive              Boolean  @default(true) @map("is_active")
+  groupId               BigInt?  @map("group_id")
+  group                 InternGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  startDate             DateTime? @map("start_date") @db.Date
+  endDate               DateTime? @map("end_date") @db.Date
+  weekdays              Int[]    @default([])
+  weekInterval          Int      @default(1) @map("week_interval")
+  supervisorUserId      String?  @map("supervisor_user_id")
+  substituteUserId      String?  @map("substitute_user_id")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+  attendance            InternAttendance[]
+
+  @@map("interns")
+}
+
+model InternAttendance {
+  id                    BigInt   @id @default(autoincrement())
+  internId              String   @map("intern_id")
+  intern                 Intern  @relation(fields: [internId], references: [id], onDelete: Cascade)
+  date                   DateTime @db.Date
+  status                 String?
+  reason                 String?
+  internReason           String?  @map("intern_reason")
+  internReasonConfirmed  Boolean  @default(false) @map("intern_reason_confirmed")
+  recordedBy             String?  @map("recorded_by")
+  recordedAt             DateTime? @map("recorded_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  @@unique([internId, date])
+  @@map("intern_attendance")
+}
+
 enum LeaveType {
   ANNUAL_LEAVE
   SICK_LEAVE
