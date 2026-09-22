@@ -2127,10 +2127,6 @@ button.rbc-input::-moz-focus-inner {
     grid-template-columns: repeat(1, minmax(0, 1fr));
   }
 
-  .grid-cols-2 {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .grid-cols-6 {
     grid-template-columns: repeat(6, minmax(0, 1fr));
   }
@@ -3797,6 +3793,10 @@ button.rbc-input::-moz-focus-inner {
       gap: calc(var(--spacing) * 4);
     }
 
+    .sm\:p-4 {
+      padding: calc(var(--spacing) * 4);
+    }
+
     .sm\:p-6 {
       padding: calc(var(--spacing) * 6);
     }
@@ -3839,6 +3839,14 @@ button.rbc-input::-moz-focus-inner {
   @media (min-width: 48rem) {
     .md\:col-span-3 {
       grid-column: span 3 / span 3;
+    }
+
+    .md\:block {
+      display: block;
+    }
+
+    .md\:hidden {
+      display: none;
     }
 
     .md\:w-auto {
@@ -3896,14 +3904,6 @@ button.rbc-input::-moz-focus-inner {
       grid-template-columns: 1.25fr .75fr;
     }
 
-    .lg\:grid-cols-\[380px_1fr\] {
-      grid-template-columns: 380px 1fr;
-    }
-
-    .lg\:grid-cols-\[400px_1fr\] {
-      grid-template-columns: 400px 1fr;
-    }
-
     .lg\:flex-row {
       flex-direction: row;
     }
@@ -3928,6 +3928,14 @@ button.rbc-input::-moz-focus-inner {
 
     .xl\:grid-cols-4 {
       grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .xl\:grid-cols-\[minmax\(0\,380px\)_minmax\(0\,1fr\)\] {
+      grid-template-columns: minmax(0, 380px) minmax(0, 1fr);
+    }
+
+    .xl\:grid-cols-\[minmax\(0\,400px\)_minmax\(0\,1fr\)\] {
+      grid-template-columns: minmax(0, 400px) minmax(0, 1fr);
     }
   }
 

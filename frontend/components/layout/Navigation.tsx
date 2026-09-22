@@ -66,40 +66,11 @@ export default function Navigation() {
     <nav className="sticky top-0 z-40 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
       <div className="container mx-auto px-3 sm:px-4">
         <div className="flex min-h-14 items-center justify-between gap-2 py-2 sm:min-h-16 sm:gap-3 sm:py-3">
-          <div className="flex min-w-0 items-center gap-3 lg:gap-8">
+          <div className="flex min-w-0 items-center gap-3">
             <Link to="/" className="flex min-w-0 items-center gap-2">
               <Calendar className="h-6 w-6 shrink-0 text-primary" />
               <span className="truncate text-base font-semibold sm:text-lg">CellQos Správa dovoleniek</span>
             </Link>
-
-            <div className="hidden flex-wrap gap-1 lg:flex">
-              {visibleItems.map((item) => {
-                const Icon = item.icon;
-                const isActive =
-                  location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
-
-                return (
-                  <Link
-                    key={item.path}
-                    to={item.path}
-                    className={cn(
-                      "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors",
-                      isActive
-                        ? "bg-primary text-primary-foreground"
-                        : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                    )}
-                  >
-                    <Icon className="h-4 w-4" />
-                    <span>{item.label}</span>
-                    {item.path === "/notifications" && unreadCount > 0 && (
-                      <Badge variant="secondary" className="ml-1 px-2 py-0 text-xs">
-                        {unreadCount}
-                      </Badge>
-                    )}
-                  </Link>
-                );
-              })}
-            </div>
           </div>
 
           <div className="hidden items-center gap-4 lg:flex">
@@ -134,6 +105,33 @@ export default function Navigation() {
             {mobileMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </Button>
         </div>
+
+        {user && (
+          <div className="hidden flex-wrap gap-1 border-t py-2 lg:flex" aria-label="Hlavná navigácia">
+            {visibleItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  className={cn(
+                    "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                    isActive
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  )}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span>{item.label}</span>
+                  {item.path === "/notifications" && unreadCount > 0 && (
+                    <Badge variant="secondary" className="ml-1 px-2 py-0 text-xs">{unreadCount}</Badge>
+                  )}
+                </Link>
+              );
+            })}
+          </div>
+        )}
 
         {mobileMenuOpen && (
           <div className="max-h-[calc(100dvh-3.5rem)] overflow-y-auto border-t py-3 lg:hidden">

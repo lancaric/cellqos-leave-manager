@@ -19,7 +19,7 @@ var __privateWrapper = (obj, member, setter, getter) => ({
   }
 });
 var require_index_001 = __commonJS({
-  "assets/index-CRJn6MmF.js"(exports, module) {
+  "assets/index-DfM7RT15.js"(exports, module) {
     var _provider, _providerCalled, _a, _focused, _cleanup, _setup, _b, _online, _cleanup2, _setup2, _c, _gcTimeout, _d, _initialState, _revertState, _cache, _client, _retryer, _defaultOptions, _abortSignalConsumed, _Query_instances, dispatch_fn, _e, _client2, _currentQuery, _currentQueryInitialState, _currentResult, _currentResultState, _currentResultOptions, _currentThenable, _selectError, _selectFn, _selectResult, _lastQueryWithDefinedData, _staleTimeoutId, _refetchIntervalId, _currentRefetchInterval, _trackedProps, _QueryObserver_instances, executeFetch_fn, updateStaleTimeout_fn, computeRefetchInterval_fn, updateRefetchInterval_fn, updateTimers_fn, clearStaleTimeout_fn, clearRefetchInterval_fn, updateQuery_fn, notify_fn, _f, _client3, _observers, _mutationCache, _retryer2, _Mutation_instances, dispatch_fn2, _g, _mutations, _scopes, _mutationId, _h, _client4, _currentResult2, _currentMutation, _mutateOptions, _MutationObserver_instances, updateResult_fn, notify_fn2, _i, _queries, _j, _queryCache, _mutationCache2, _defaultOptions2, _queryDefaults, _mutationDefaults, _mountCount, _unsubscribeFocus, _unsubscribeOnline, _k;
     function _mergeNamespaces(n, m) {
       for (var i = 0; i < m.length; i++) {
@@ -23144,32 +23144,10 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
       return /* @__PURE__ */ jsxRuntimeExports.jsxs("nav", { className: "sticky top-0 z-40 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "container mx-auto px-3 sm:px-4", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-h-14 items-center justify-between gap-2 py-2 sm:min-h-16 sm:gap-3 sm:py-3", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-w-0 items-center gap-3 lg:gap-8", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsxs(Link, { to: "/", className: "flex min-w-0 items-center gap-2", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx(Calendar$2, { className: "h-6 w-6 shrink-0 text-primary" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate text-base font-semibold sm:text-lg", children: "CellQos Správa dovoleniek" })
-              ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "hidden flex-wrap gap-1 lg:flex", children: visibleItems.map((item) => {
-                const Icon2 = item.icon;
-                const isActive = location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
-                return /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                  Link,
-                  {
-                    to: item.path,
-                    className: cn(
-                      "flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors",
-                      isActive ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                    ),
-                    children: [
-                      /* @__PURE__ */ jsxRuntimeExports.jsx(Icon2, { className: "h-4 w-4" }),
-                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: item.label }),
-                      item.path === "/notifications" && unreadCount > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: "secondary", className: "ml-1 px-2 py-0 text-xs", children: unreadCount })
-                    ]
-                  },
-                  item.path
-                );
-              }) })
-            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex min-w-0 items-center gap-3", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(Link, { to: "/", className: "flex min-w-0 items-center gap-2", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(Calendar$2, { className: "h-6 w-6 shrink-0 text-primary" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate text-base font-semibold sm:text-lg", children: "CellQos Správa dovoleniek" })
+            ] }) }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "hidden items-center gap-4 lg:flex", children: user ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx(
                 Link,
@@ -23195,6 +23173,26 @@ Please change the parent <Route path="${parentPath}"> to <Route path="${parentPa
               }
             )
           ] }),
+          user && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "hidden flex-wrap gap-1 border-t py-2 lg:flex", "aria-label": "Hlavná navigácia", children: visibleItems.map((item) => {
+            const Icon2 = item.icon;
+            const isActive = location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
+            return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              Link,
+              {
+                to: item.path,
+                className: cn(
+                  "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                  isActive ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                ),
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(Icon2, { className: "h-4 w-4 shrink-0" }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { children: item.label }),
+                  item.path === "/notifications" && unreadCount > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: "secondary", className: "ml-1 px-2 py-0 text-xs", children: unreadCount })
+                ]
+              },
+              item.path
+            );
+          }) }),
           mobileMenuOpen && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "max-h-[calc(100dvh-3.5rem)] overflow-y-auto border-t py-3 lg:hidden", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-2", children: [
             visibleItems.map((item) => {
               const Icon2 = item.icon;
@@ -54530,63 +54528,106 @@ For more information, see https://radix-ui.com/primitives/docs/components/${titl
         setEditing(Number(g.id));
         setForm({ name: g.name, startDate: g.startDate, endDate: g.endDate, weekdays: g.weekdays, weekInterval: g.weekInterval || 1, supervisorUserId: g.supervisorUserId, substituteUserId: g.substituteUserId || "" });
       };
-      return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid gap-5 lg:grid-cols-[380px_1fr]", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(SettingsForm, { title: editing ? "Upraviť skupinu" : "Nová skupina", form, setForm, employees: ((_a2 = employees.data) == null ? void 0 : _a2.employees) || [], onSave: () => save.mutate(), cancel: editing ? () => {
+      const groupRows = ((_a2 = groups.data) == null ? void 0 : _a2.groups) || [];
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid min-w-0 gap-5 xl:grid-cols-[minmax(0,380px)_minmax(0,1fr)]", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(SettingsForm, { title: editing ? "Upraviť skupinu" : "Nová skupina", form, setForm, employees: ((_b2 = employees.data) == null ? void 0 : _b2.employees) || [], onSave: () => save.mutate(), cancel: editing ? () => {
           setEditing(null);
           setForm({ ...emptySettings });
         } : void 0 }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(Card, { className: "p-4", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(Table, { children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(TableHeader, { children: /* @__PURE__ */ jsxRuntimeExports.jsxs(TableRow, { children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Skupina" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Obdobie a dni" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Poverený" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Počet" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, {})
-          ] }) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(TableBody, { children: (((_b2 = groups.data) == null ? void 0 : _b2.groups) || []).map((g) => /* @__PURE__ */ jsxRuntimeExports.jsxs(TableRow, { children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { children: g.name }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs(TableCell, { children: [
-              g.startDate,
-              " – ",
-              g.endDate,
-              /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-muted-foreground", children: g.weekdays.map((d) => {
-                var _a3;
-                return (_a3 = weekdays.find((w) => w.id === d)) == null ? void 0 : _a3.label;
-              }).join(", ") })
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs(TableCell, { children: [
-              g.supervisorName,
-              g.substituteName && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-muted-foreground", children: [
-                  "Zástupca: ",
-                  g.substituteName
-                ] })
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(Card, { className: "min-w-0 space-y-3 p-3 sm:p-4", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "font-semibold", children: "Existujúce skupiny" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "space-y-3 md:hidden", children: groupRows.map((group) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 space-y-2 rounded-lg border p-3 text-sm", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-start justify-between gap-2", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "break-words", children: group.name }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs(Badge, { variant: "secondary", children: [
+                group.internCount,
+                " praktikantov"
               ] })
             ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { children: g.internCount }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs(TableCell, { className: "space-x-2", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { size: "sm", variant: "outline", onClick: () => edit(g), children: "Upraviť" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { size: "sm", variant: "destructive", onClick: () => remove.mutate(Number(g.id)), children: "Odstrániť" })
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-muted-foreground", children: "Obdobie:" }),
+              " ",
+              group.startDate,
+              " – ",
+              group.endDate
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-muted-foreground", children: "Dni:" }),
+              " ",
+              group.weekdays.map((day2) => {
+                var _a3;
+                return (_a3 = weekdays.find((item) => item.id === day2)) == null ? void 0 : _a3.label;
+              }).join(", ")
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "break-words", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-muted-foreground", children: "Poverený:" }),
+              " ",
+              group.supervisorName
+            ] }),
+            group.substituteName && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "break-words", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-muted-foreground", children: "Zástupca:" }),
+              " ",
+              group.substituteName
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap gap-2 pt-1", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { size: "sm", variant: "outline", onClick: () => edit(group), children: "Upraviť" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { size: "sm", variant: "destructive", onClick: () => remove.mutate(Number(group.id)), children: "Odstrániť" })
             ] })
-          ] }, g.id)) })
-        ] }) })
+          ] }, group.id)) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "hidden md:block", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(Table, { children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHeader, { children: /* @__PURE__ */ jsxRuntimeExports.jsxs(TableRow, { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Skupina" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Obdobie a dni" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Poverený" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Počet" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, {})
+            ] }) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableBody, { children: groupRows.map((group) => /* @__PURE__ */ jsxRuntimeExports.jsxs(TableRow, { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { children: group.name }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs(TableCell, { children: [
+                group.startDate,
+                " – ",
+                group.endDate,
+                /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-muted-foreground", children: group.weekdays.map((day2) => {
+                  var _a3;
+                  return (_a3 = weekdays.find((item) => item.id === day2)) == null ? void 0 : _a3.label;
+                }).join(", ") })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs(TableCell, { children: [
+                group.supervisorName,
+                group.substituteName && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}),
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-muted-foreground", children: [
+                    "Zástupca: ",
+                    group.substituteName
+                  ] })
+                ] })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { children: group.internCount }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap gap-2", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { size: "sm", variant: "outline", onClick: () => edit(group), children: "Upraviť" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { size: "sm", variant: "destructive", onClick: () => remove.mutate(Number(group.id)), children: "Odstrániť" })
+              ] }) })
+            ] }, group.id)) })
+          ] }) }),
+          groupRows.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-muted-foreground", children: "Zatiaľ nie je vytvorená žiadna skupina." })
+        ] })
       ] });
     }
     function SettingsForm({ title, form, setForm, employees, onSave, cancel: cancel2 }) {
-      return /* @__PURE__ */ jsxRuntimeExports.jsxs(Card, { className: "space-y-4 p-4", children: [
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs(Card, { className: "min-w-0 space-y-4 p-4", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "font-semibold", children: title }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { children: "Názov" }),
           /* @__PURE__ */ jsxRuntimeExports.jsx(Input, { value: form.name, onChange: (e) => setForm({ ...form, name: e.target.value }) })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-2 gap-3", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid gap-3 sm:grid-cols-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { children: "Od" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx(Input, { type: "date", value: form.startDate, onChange: (e) => setForm({ ...form, startDate: e.target.value }) })
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { children: "Do" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx(Input, { type: "date", value: form.endDate, onChange: (e) => setForm({ ...form, endDate: e.target.value }) })
           ] })
@@ -54601,19 +54642,19 @@ For more information, see https://radix-ui.com/primitives/docs/components/${titl
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { children: "Poverený zamestnanec" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { className: "h-9 w-full rounded-md border bg-background px-3", value: form.supervisorUserId, onChange: (e) => setForm({ ...form, supervisorUserId: e.target.value }), children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { className: "h-9 w-full min-w-0 rounded-md border bg-background px-3", value: form.supervisorUserId, onChange: (e) => setForm({ ...form, supervisorUserId: e.target.value }), children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "", children: "Vyberte..." }),
             employees.map((e) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: e.id, children: e.name }, e.id))
           ] })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { children: "Zástupca (voliteľné)" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { className: "h-9 w-full rounded-md border bg-background px-3", value: form.substituteUserId, onChange: (e) => setForm({ ...form, substituteUserId: e.target.value }), children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { className: "h-9 w-full min-w-0 rounded-md border bg-background px-3", value: form.substituteUserId, onChange: (e) => setForm({ ...form, substituteUserId: e.target.value }), children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "", children: "Bez zástupcu" }),
             employees.filter((e) => e.id !== form.supervisorUserId).map((e) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: e.id, children: e.name }, e.id))
           ] })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex gap-2", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap gap-2", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { onClick: onSave, children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(Save, { className: "mr-2 h-4 w-4" }),
             "Uložiť"
@@ -54643,8 +54684,13 @@ For more information, see https://radix-ui.com/primitives/docs/components/${titl
         setEditing(i.id);
         setForm({ name: i.name, email: i.email, password: "", groupId: i.groupId ? String(i.groupId) : "", startDate: i.startDate, endDate: i.endDate, weekdays: i.weekdays, weekInterval: i.weekInterval || 1, supervisorUserId: i.supervisorUserId || "", substituteUserId: i.substituteUserId || "", isActive: i.isActive });
       };
-      return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid gap-5 lg:grid-cols-[400px_1fr]", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs(Card, { className: "space-y-4 p-4", children: [
+      const internRows = ((_a2 = interns.data) == null ? void 0 : _a2.interns) || [];
+      const cancelEdit = () => {
+        setEditing(null);
+        setForm({ ...emptySettings, email: "", password: "", groupId: "", isActive: true });
+      };
+      return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid min-w-0 gap-5 xl:grid-cols-[minmax(0,400px)_minmax(0,1fr)]", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(Card, { className: "min-w-0 space-y-4 p-4", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "font-semibold", children: editing ? "Upraviť praktikanta" : "Nový praktikant" }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { children: "Meno" }),
@@ -54660,66 +54706,91 @@ For more information, see https://radix-ui.com/primitives/docs/components/${titl
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { children: "Skupina" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { className: "h-9 w-full rounded-md border bg-background px-3", value: form.groupId, onChange: (e) => setForm({ ...form, groupId: e.target.value }), children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { className: "h-9 w-full min-w-0 rounded-md border bg-background px-3", value: form.groupId, onChange: (e) => setForm({ ...form, groupId: e.target.value }), children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "", children: "Individuálne nastavenie" }),
-              (((_a2 = groups.data) == null ? void 0 : _a2.groups) || []).map((g) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: g.id, children: g.name }, g.id))
+              (((_b2 = groups.data) == null ? void 0 : _b2.groups) || []).map((g) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: g.id, children: g.name }, g.id))
             ] })
           ] }),
-          form.groupId ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "rounded-md bg-muted p-3 text-sm", children: "Obdobie, dni a poverení zamestnanci sa preberajú zo skupiny a nemožno ich upraviť individuálne." }) : /* @__PURE__ */ jsxRuntimeExports.jsx(SettingsFormFields, { form, setForm, employees: ((_b2 = employees.data) == null ? void 0 : _b2.employees) || [] }),
-          " ",
-          editing && /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "flex gap-2", children: [
+          form.groupId ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "rounded-md bg-muted p-3 text-sm", children: "Obdobie, dni a poverení zamestnanci sa preberajú zo skupiny a nemožno ich upraviť individuálne." }) : /* @__PURE__ */ jsxRuntimeExports.jsx(SettingsFormFields, { form, setForm, employees: ((_c2 = employees.data) == null ? void 0 : _c2.employees) || [] }),
+          editing && /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "flex items-center gap-2", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(Checkbox, { checked: form.isActive, onCheckedChange: (v) => setForm({ ...form, isActive: Boolean(v) }) }),
             "Aktívny účet"
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex gap-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap gap-2", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { onClick: () => save.mutate(), children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx(Plus, { className: "mr-2 h-4 w-4" }),
               editing ? "Uložiť" : "Pridať"
             ] }),
-            editing && /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { variant: "outline", onClick: () => {
-              setEditing(null);
-              setForm({ ...emptySettings, email: "", password: "", groupId: "", isActive: true });
-            }, children: "Zrušiť" })
+            editing && /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { variant: "outline", onClick: cancelEdit, children: "Zrušiť" })
           ] })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(Card, { className: "p-4", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(Table, { children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(TableHeader, { children: /* @__PURE__ */ jsxRuntimeExports.jsxs(TableRow, { children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Praktikant" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Nastavenie" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Poverený" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Stav" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, {})
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(Card, { className: "min-w-0 space-y-3 p-3 sm:p-4", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "font-semibold", children: "Existujúci praktikanti" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "space-y-3 md:hidden", children: internRows.map((intern) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 space-y-2 rounded-lg border p-3 text-sm", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-wrap items-start justify-between gap-2", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("strong", { className: "break-words", children: intern.name }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: intern.isActive ? "default" : "secondary", children: intern.isActive ? "Aktívny" : "Neaktívny" })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "break-all text-muted-foreground", children: intern.email }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-muted-foreground", children: "Nastavenie:" }),
+              " ",
+              intern.groupName || "Individuálne"
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-muted-foreground", children: "Obdobie:" }),
+              " ",
+              intern.startDate,
+              " – ",
+              intern.endDate
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "break-words", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-muted-foreground", children: "Poverený:" }),
+              " ",
+              intern.supervisorName
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { size: "sm", variant: "outline", onClick: () => edit(intern), children: "Upraviť" })
+          ] }, intern.id)) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "hidden md:block", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(Table, { children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHeader, { children: /* @__PURE__ */ jsxRuntimeExports.jsxs(TableRow, { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Praktikant" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Nastavenie" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Poverený" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Stav" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, {})
+            ] }) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableBody, { children: internRows.map((intern) => /* @__PURE__ */ jsxRuntimeExports.jsxs(TableRow, { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs(TableCell, { children: [
+                intern.name,
+                /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-muted-foreground", children: intern.email })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs(TableCell, { children: [
+                intern.groupName || "Individuálne",
+                /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-muted-foreground", children: [
+                  intern.startDate,
+                  " – ",
+                  intern.endDate
+                ] })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { children: intern.supervisorName }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: intern.isActive ? "default" : "secondary", children: intern.isActive ? "Aktívny" : "Neaktívny" }) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { size: "sm", variant: "outline", onClick: () => edit(intern), children: "Upraviť" }) })
+            ] }, intern.id)) })
           ] }) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(TableBody, { children: (((_c2 = interns.data) == null ? void 0 : _c2.interns) || []).map((i) => /* @__PURE__ */ jsxRuntimeExports.jsxs(TableRow, { children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsxs(TableCell, { children: [
-              i.name,
-              /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-muted-foreground", children: i.email })
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs(TableCell, { children: [
-              i.groupName || "Individuálne",
-              /* @__PURE__ */ jsxRuntimeExports.jsx("br", {}),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-muted-foreground", children: [
-                i.startDate,
-                " – ",
-                i.endDate
-              ] })
-            ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { children: i.supervisorName }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: i.isActive ? "default" : "secondary", children: i.isActive ? "Aktívny" : "Neaktívny" }) }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { size: "sm", variant: "outline", onClick: () => edit(i), children: "Upraviť" }) })
-          ] }, i.id)) })
-        ] }) })
+          internRows.length === 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-muted-foreground", children: "Zatiaľ nie je pridaný žiadny praktikant." })
+        ] })
       ] });
     }
     function SettingsFormFields({ form, setForm, employees }) {
       return /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-2 gap-3", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid gap-3 sm:grid-cols-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { children: "Od" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx(Input, { type: "date", value: form.startDate, onChange: (e) => setForm({ ...form, startDate: e.target.value }) })
           ] }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { children: "Do" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx(Input, { type: "date", value: form.endDate, onChange: (e) => setForm({ ...form, endDate: e.target.value }) })
           ] })
@@ -54734,14 +54805,14 @@ For more information, see https://radix-ui.com/primitives/docs/components/${titl
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { children: "Poverený zamestnanec" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { className: "h-9 w-full rounded-md border bg-background px-3", value: form.supervisorUserId, onChange: (e) => setForm({ ...form, supervisorUserId: e.target.value }), children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { className: "h-9 w-full min-w-0 rounded-md border bg-background px-3", value: form.supervisorUserId, onChange: (e) => setForm({ ...form, supervisorUserId: e.target.value }), children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "", children: "Vyberte..." }),
             employees.map((e) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: e.id, children: e.name }, e.id))
           ] })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { children: "Zástupca" }),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { className: "h-9 w-full rounded-md border bg-background px-3", value: form.substituteUserId, onChange: (e) => setForm({ ...form, substituteUserId: e.target.value }), children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("select", { className: "h-9 w-full min-w-0 rounded-md border bg-background px-3", value: form.substituteUserId, onChange: (e) => setForm({ ...form, substituteUserId: e.target.value }), children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "", children: "Bez zástupcu" }),
             employees.filter((e) => e.id !== form.supervisorUserId).map((e) => /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: e.id, children: e.name }, e.id))
           ] })
